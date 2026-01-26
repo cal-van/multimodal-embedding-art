@@ -7,13 +7,13 @@ Usage:
 """
 
 import sys
-import traceback
 from pathlib import Path
 from typing import Any
 
 import click
 import yaml
 from rich.console import Console
+from rich.table import Table
 
 from embedding_art.core.config import load_config
 from embedding_art.exceptions import (
@@ -75,6 +75,60 @@ def cli(debug: bool, config: str | None) -> None:
         _loaded_config = load_config(config)
     except yaml.YAMLError as e:
         raise click.UsageError(f"Invalid YAML in config file: {e}") from e
+
+
+def _print_dry_run_summary(
+    target_text: tuple[tuple[str, float], ...],
+    target_image: tuple[tuple[str, float], ...],
+    target_audio: tuple[tuple[str, float], ...],
+    output_modality: str,
+    output_path: str | None,
+    steps: int,
+    lr: float,
+    seed: int | None,
+    device: str,
+) -> None:
+    """Print a summary of what optimization would do without running it."""
+    table = Table(title="Dry Run Configuration", show_header=False, box=None)
+    table.add_column("Setting", style="bold cyan")
+    table.add_column("Value", style="white")
+
+    table.add_row("Device", device)
+    table.add_row("Steps", str(steps))
+    table.add_row("Learning Rate", str(lr))
+    table.add_row("Output Modality", output_modality)
+
+    if output_path:
+        table.add_row("Output Path", output_path)
+    else:
+        table.add_row("Output Path", "(auto-generated)")
+
+    if seed is not None:
+        table.add_row("Seed", str(seed))
+    else:
+        table.add_row("Seed", "(random)")
+
+    console.print(table)
+    console.print()
+
+    # Print target concepts
+    concepts_table = Table(title="Target Concepts", show_header=True)
+    concepts_table.add_column("Type", style="bold")
+    concepts_table.add_column("Value", style="white")
+    concepts_table.add_column("Weight", style="cyan")
+
+    for text, weight in target_text:
+        concepts_table.add_row("Text", text, str(weight))
+
+    for path, weight in target_image:
+        concepts_table.add_row("Image", str(path), str(weight))
+
+    for path, weight in target_audio:
+        concepts_table.add_row("Audio", str(path), str(weight))
+
+    console.print(concepts_table)
+    console.print()
+    console.print("[dim]Dry run complete. No models were loaded.[/dim]")
 
 
 @cli.command()
@@ -140,6 +194,24 @@ def cli(debug: bool, config: str | None) -> None:
     default=None,
     help="Device to use (default: mps or from config)",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be done without running optimization",
+)
+@click.option(
+    "--checkpoint-dir",
+    type=click.Path(),
+    default=None,
+    help="Directory to save checkpoints during optimization",
+)
+@click.option(
+    "--resume",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to a checkpoint file to resume optimization from",
+)
 def optimize(
     target_text,
     target_image,
@@ -150,23 +222,40 @@ def optimize(
     lr,
     seed,
     device,
+    dry_run,
+    checkpoint_dir,
+    resume,
 ):
     """Optimize an output toward a target concept."""
     # Validate inputs before heavy imports
     if not target_text and not target_image and not target_audio:
         raise click.UsageError("At least one target concept is required")
 
+    # Merge CLI args with config file values (needed for both dry-run and real run)
+    opt_config = _loaded_config.get("optimization", {})
+    steps = steps if steps is not None else opt_config.get("steps", 2000)
+    lr = lr if lr is not None else opt_config.get("learning_rate", 0.1)
+    seed = seed if seed is not None else opt_config.get("seed")
+    device = device if device is not None else _loaded_config.get("device", "mps")
+
+    if dry_run:
+        _print_dry_run_summary(
+            target_text=target_text,
+            target_image=target_image,
+            target_audio=target_audio,
+            output_modality=output,
+            output_path=output_path,
+            steps=steps,
+            lr=lr,
+            seed=seed,
+            device=device,
+        )
+        return
+
     try:
         from embedding_art import Concept, EmbeddingArtEngine, OptimizationConfig
         from embedding_art.encoders import ImageBindEncoder
         from embedding_art.generators import SDXLImageGenerator
-
-        # Merge CLI args with config file values
-        opt_config = _loaded_config.get("optimization", {})
-        steps = steps if steps is not None else opt_config.get("steps", 2000)
-        lr = lr if lr is not None else opt_config.get("learning_rate", 0.1)
-        seed = seed if seed is not None else opt_config.get("seed")
-        device = device if device is not None else _loaded_config.get("device", "mps")
 
         console.print("[bold]Loading models...[/bold]")
 
@@ -213,8 +302,16 @@ def optimize(
             seed=seed,
         )
 
+        if resume:
+            console.print(f"[bold]Resuming from checkpoint: {resume}[/bold]")
         console.print(f"[bold]Optimizing for {steps} steps...[/bold]")
-        result = engine.optimize(target, output, config)
+        result = engine.optimize(
+            target,
+            output,
+            config,
+            checkpoint_dir=Path(checkpoint_dir) if checkpoint_dir else None,
+            resume_from=Path(resume) if resume else None,
+        )
 
         console.print(f"[green]Final similarity: {result.final_similarity:.4f}[/green]")
         console.print(f"[dim]Elapsed: {result.elapsed_seconds:.1f}s[/dim]")

@@ -5,9 +5,10 @@ This is the main loop that optimizes a latent to maximize similarity
 between its decoded output and a target concept embedding.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from time import time
-from typing import Callable
+from typing import Any, Callable
 
 import torch
 import torch.nn.functional as F
@@ -200,6 +201,8 @@ class EmbeddingArtEngine:
         regularizers: list[Regularizer] | CompositeRegularizer | None = None,
         callback: Callable[[int, float, float, torch.Tensor], None] | None = None,
         progress: bool | ProgressConfig = True,
+        checkpoint_dir: Path | str | None = None,
+        resume_from: Path | str | None = None,
     ) -> OptimizationResult:
         """
         Optimize a latent to maximize similarity with target concept.
@@ -211,6 +214,8 @@ class EmbeddingArtEngine:
             regularizers: Regularization losses (default: CompositeRegularizer.default_image())
             callback: Called each step with (step, loss, similarity, latent)
             progress: Show progress bar. Can be bool or ProgressConfig for fine-grained control.
+            checkpoint_dir: Directory to save checkpoints. If None, no checkpoints are saved to disk.
+            resume_from: Path to a checkpoint file to resume from.
 
         Returns:
             OptimizationResult with final output and metadata
@@ -229,12 +234,41 @@ class EmbeddingArtEngine:
         # Move target to device
         target_embedding = target.embedding.to(self.device)
 
-        # Initialize latent
-        latent = generator.init_latent(seed=config.seed)
+        # Initialize latent and optimizer
+        start_step = 0
 
-        # Setup optimizer
-        optimizer = self._create_optimizer(latent, config)
+        if resume_from is not None:
+            # Resume from checkpoint
+            checkpoint = self._load_checkpoint(resume_from)
+            latent = checkpoint["latent"].to(self.device).requires_grad_(True)
+            start_step = checkpoint["step"]
+            optimizer = self._create_optimizer(latent, config)
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+        else:
+            # Fresh start
+            latent = generator.init_latent(seed=config.seed)
+            optimizer = self._create_optimizer(latent, config)
+
         scheduler = self._create_scheduler(optimizer, config)
+
+        # Advance scheduler to correct position if resuming
+        # The warning about calling scheduler.step() before optimizer.step() is expected
+        # here since we're fast-forwarding the scheduler to match the checkpoint position
+        if resume_from is not None and scheduler is not None:
+            import warnings
+
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Detected call of `lr_scheduler.step\\(\\)` before `optimizer.step\\(\\)`",
+                )
+                for _ in range(start_step):
+                    scheduler.step()
+
+        # Convert checkpoint_dir to Path if provided
+        checkpoint_path: Path | None = None
+        if checkpoint_dir is not None:
+            checkpoint_path = Path(checkpoint_dir)
 
         # Tracking
         loss_history: list[float] = []
@@ -259,6 +293,8 @@ class EmbeddingArtEngine:
                 checkpoints=checkpoints,
                 callback=callback,
                 start_time=start_time,
+                checkpoint_dir=checkpoint_path,
+                start_step=start_step,
             )
         else:
             elapsed = self._run_simple_optimization(
@@ -276,6 +312,8 @@ class EmbeddingArtEngine:
                 checkpoints=checkpoints,
                 callback=callback,
                 start_time=start_time,
+                checkpoint_dir=checkpoint_path,
+                start_step=start_step,
             )
 
         # Final encoding (without augmentation)
@@ -340,9 +378,7 @@ class EmbeddingArtEngine:
             left = torch.randint(0, w - crop_w + 1, (1,)).item()
 
             augmented = augmented[:, :, top : top + crop_h, left : left + crop_w]
-            augmented = F.interpolate(
-                augmented, size=(h, w), mode="bilinear", align_corners=False
-            )
+            augmented = F.interpolate(augmented, size=(h, w), mode="bilinear", align_corners=False)
 
         if aug_config.random_flip and torch.rand(1).item() > 0.5:
             augmented = torch.flip(augmented, dims=[-1])
@@ -395,6 +431,33 @@ class EmbeddingArtEngine:
             return progress
         return ProgressConfig(enabled=progress)
 
+    def _save_checkpoint(
+        self,
+        checkpoint_dir: Path,
+        step: int,
+        latent: torch.Tensor,
+        optimizer: torch.optim.Optimizer,
+        config: OptimizationConfig,
+    ) -> None:
+        """Save a checkpoint to disk."""
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = checkpoint_dir / f"checkpoint_step_{step:04d}.pt"
+
+        checkpoint_data: dict[str, Any] = {
+            "latent": latent.detach().clone(),
+            "optimizer_state": optimizer.state_dict(),
+            "step": step,
+            "config": asdict(config),
+        }
+        torch.save(checkpoint_data, checkpoint_path)
+
+    def _load_checkpoint(self, checkpoint_path: Path | str) -> dict[str, Any]:
+        """Load a checkpoint from disk."""
+        path = Path(checkpoint_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+        return torch.load(path, weights_only=False)
+
     def _run_simple_optimization(
         self,
         latent: torch.Tensor,
@@ -411,6 +474,8 @@ class EmbeddingArtEngine:
         checkpoints: list[tuple[int, torch.Tensor]],
         callback: Callable[[int, float, float, torch.Tensor], None] | None,
         start_time: float,
+        checkpoint_dir: Path | None = None,
+        start_step: int = 0,
     ) -> float:
         """Run optimization with simple progress bar."""
         progress_ctx = Progress(
@@ -422,10 +487,12 @@ class EmbeddingArtEngine:
             disable=not progress_config.enabled,
         )
 
-        with progress_ctx as pbar:
-            task = pbar.add_task("Optimizing...", total=config.steps)
+        remaining_steps = config.steps - start_step
 
-            for step in range(config.steps):
+        with progress_ctx as pbar:
+            task = pbar.add_task("Optimizing...", total=remaining_steps)
+
+            for step in range(start_step, config.steps):
                 loss_val, sim_val = self._optimization_step(
                     step=step,
                     latent=latent,
@@ -440,6 +507,7 @@ class EmbeddingArtEngine:
                     similarity_history=similarity_history,
                     checkpoints=checkpoints,
                     callback=callback,
+                    checkpoint_dir=checkpoint_dir,
                 )
 
                 pbar.update(task, advance=1, description=f"sim={sim_val:.4f}")
@@ -462,6 +530,8 @@ class EmbeddingArtEngine:
         checkpoints: list[tuple[int, torch.Tensor]],
         callback: Callable[[int, float, float, torch.Tensor], None] | None,
         start_time: float,
+        checkpoint_dir: Path | None = None,
+        start_step: int = 0,
     ) -> float:
         """Run optimization with verbose Rich display."""
         console = Console()
@@ -517,7 +587,7 @@ class EmbeddingArtEngine:
             return Group(*elements)
 
         with Live(console=console, refresh_per_second=4) as live:
-            for step in range(config.steps):
+            for step in range(start_step, config.steps):
                 loss_val, sim_val = self._optimization_step(
                     step=step,
                     latent=latent,
@@ -532,6 +602,7 @@ class EmbeddingArtEngine:
                     similarity_history=similarity_history,
                     checkpoints=checkpoints,
                     callback=callback,
+                    checkpoint_dir=checkpoint_dir,
                 )
 
                 lr = None
@@ -564,6 +635,7 @@ class EmbeddingArtEngine:
         similarity_history: list[float],
         checkpoints: list[tuple[int, torch.Tensor]],
         callback: Callable[[int, float, float, torch.Tensor], None] | None,
+        checkpoint_dir: Path | None = None,
     ) -> tuple[float, float]:
         """Execute a single optimization step."""
         optimizer.zero_grad()
@@ -591,6 +663,9 @@ class EmbeddingArtEngine:
 
         if config.checkpoint_every and step % config.checkpoint_every == 0:
             checkpoints.append((step, latent.detach().clone()))
+            # Save to disk if checkpoint_dir is provided
+            if checkpoint_dir is not None:
+                self._save_checkpoint(checkpoint_dir, step, latent, optimizer, config)
 
         if callback is not None:
             callback(step, loss_val, sim_val, latent)
