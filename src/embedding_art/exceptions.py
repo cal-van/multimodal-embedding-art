@@ -127,3 +127,21 @@ class GeneratorError(EmbeddingArtError):
             f"Original error: {original_error}"
         )
         super().__init__(message)
+
+
+class UpscalerError(EmbeddingArtError):
+    """Raised when upscaling fails."""
+
+    def __init__(self, operation: str, original_error: Exception) -> None:
+        self.operation = operation
+        self.original_error = original_error
+
+        message = (
+            f"Failed during {operation}.\n\n"
+            f"Original error: {original_error}\n\n"
+            "Suggestions:\n"
+            "  - Ensure the input image is a valid RGB image\n"
+            "  - Try reducing the scale factor\n"
+            "  - Check that Real-ESRGAN is installed: pip install py-real-esrgan"
+        )
+        super().__init__(message)
