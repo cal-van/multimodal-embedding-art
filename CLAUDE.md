@@ -93,25 +93,84 @@ src/embedding_art/
 - `LatentNorm`: Keep latent near typical VAE distribution
 - `CompositeRegularizer.default_image()`, `.minimal()`, `.heavy()` presets
 
-## Testing Strategy
+## Testing Strategy: Red-Green-Refactor TDD
 
-**TDD is appropriate for:**
-- `Concept` class: arithmetic operations, normalization, slerp math
-- Regularizers: mathematical properties (TV, spectral, norm calculations)
-- Config validation
-- CLI argument parsing
+This project follows strict TDD with the Red-Green-Refactor cycle:
 
-**Integration tests for:**
-- Full optimization loop (requires models - mark with `@pytest.mark.slow`)
+1. **Red**: Write a failing test that defines expected behavior
+2. **Green**: Write minimal code to make the test pass
+3. **Refactor**: Clean up while keeping tests green
+
+### TDD Workflow
+
+```bash
+# 1. Write test first
+pytest tests/test_concept.py::test_slerp_midpoint -v  # Should fail (Red)
+
+# 2. Implement minimal code to pass
+pytest tests/test_concept.py::test_slerp_midpoint -v  # Should pass (Green)
+
+# 3. Refactor if needed, run all tests
+pytest tests/test_concept.py -v  # All green
+```
+
+### What to TDD
+
+**Unit tests (pure functions, no I/O):**
+- `Concept` arithmetic: add, subtract, scalar multiply, slerp, combine
+- `Concept` normalization: embeddings always unit norm after operations
+- Regularizers: TotalVariation, SpectralRegularizer, LatentNorm math
+- Config validation and defaults
+
+**Integration tests (mark with `@pytest.mark.slow`):**
+- Full optimization loop with real/mocked models
 - Encoder/generator round-trips
+- CLI end-to-end
 
-**Mock strategy:**
-- Mock `ImageBindEncoder` with fake embeddings for unit tests
-- Mock `Generator.decode()` with simple tensor transforms
+### Mock Strategy
+
+```python
+# conftest.py fixtures
+@pytest.fixture
+def mock_encoder():
+    """Returns deterministic embeddings for testing."""
+    encoder = Mock(spec=Encoder)
+    encoder.encode_text.return_value = torch.randn(1, 1024)
+    return encoder
+
+@pytest.fixture
+def mock_generator():
+    """Returns simple decoded tensors."""
+    gen = Mock(spec=Generator)
+    gen.latent_shape = (1, 4, 128, 128)
+    gen.decode.return_value = torch.rand(1, 3, 1024, 1024)
+    return gen
+```
+
+### Test File Organization
+
+```
+tests/
+├── conftest.py          # Shared fixtures
+├── test_concept.py      # Concept arithmetic and properties
+├── test_regularizers.py # Regularizer math
+├── test_config.py       # Config validation
+├── test_engine.py       # Engine with mocked deps
+└── test_integration.py  # @pytest.mark.slow real model tests
+```
 
 ## Hardware
 
-Targets Apple Silicon (MPS backend). Memory budget ~6-8GB for ImageBind + SDXL VAE.
+Targets M1 Max with 64GB unified memory. Plenty of headroom for all models simultaneously.
+
+| Component | Memory |
+|-----------|--------|
+| ImageBind | ~3GB |
+| SDXL VAE | ~1GB |
+| AudioLDM 2 | ~2GB |
+| SVD (video) | ~4GB |
+| Optimization overhead | ~2GB |
+| **Available headroom** | **~50GB** |
 
 ```python
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
