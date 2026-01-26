@@ -9,6 +9,12 @@ but with somewhat less sharpness than full diffusion.
 import torch
 from diffusers import AutoencoderKL
 
+from embedding_art.exceptions import (
+    GeneratorError,
+    ModelLoadError,
+    OutOfMemoryError,
+)
+
 
 class SDXLImageGenerator:
     """
@@ -29,13 +35,36 @@ class SDXLImageGenerator:
         device: str = "mps",
     ):
         self._device = torch.device(device)
+        self._model_id = model_id
 
         # Load VAE
-        self.vae = AutoencoderKL.from_pretrained(
-            model_id,
-            torch_dtype=torch.float32,  # float32 for MPS stability
-        )
-        self.vae.to(self._device)
+        try:
+            self.vae = AutoencoderKL.from_pretrained(
+                model_id,
+                torch_dtype=torch.float32,  # float32 for MPS stability
+            )
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="loading SDXL VAE model",
+                    device=device,
+                    original_error=e,
+                ) from e
+            raise ModelLoadError(model_name=model_id, original_error=e) from e
+        except OSError as e:
+            raise ModelLoadError(model_name=model_id, original_error=e) from e
+
+        try:
+            self.vae.to(self._device)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="moving SDXL VAE to device",
+                    device=device,
+                    original_error=e,
+                ) from e
+            raise
+
         self.vae.eval()
 
         # Freeze VAE parameters
@@ -86,17 +115,26 @@ class SDXLImageGenerator:
         Returns:
             Image tensor [B, 3, 1024, 1024] with values in [0, 1]
         """
-        # Scale latent (SDXL VAE expects scaled latents)
-        scaled_latent = latent / self.SCALING_FACTOR
+        try:
+            # Scale latent (SDXL VAE expects scaled latents)
+            scaled_latent = latent / self.SCALING_FACTOR
 
-        # Decode through VAE
-        decoded = self.vae.decode(scaled_latent).sample
+            # Decode through VAE
+            decoded = self.vae.decode(scaled_latent).sample
 
-        # Clamp to [0, 1] range
-        decoded = (decoded + 1) / 2  # VAE outputs [-1, 1]
-        decoded = decoded.clamp(0, 1)
+            # Clamp to [0, 1] range
+            decoded = (decoded + 1) / 2  # VAE outputs [-1, 1]
+            decoded = decoded.clamp(0, 1)
 
-        return decoded
+            return decoded
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="decoding latent to image",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise GeneratorError(operation="VAE decode", original_error=e) from e
 
     def encode(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -108,15 +146,24 @@ class SDXLImageGenerator:
         Returns:
             Latent tensor [B, 4, H//8, W//8]
         """
-        # Scale to [-1, 1]
-        image = image * 2 - 1
+        try:
+            # Scale to [-1, 1]
+            image = image * 2 - 1
 
-        # Encode
-        with torch.no_grad():
-            latent_dist = self.vae.encode(image).latent_dist
-            latent = latent_dist.sample()
+            # Encode
+            with torch.no_grad():
+                latent_dist = self.vae.encode(image).latent_dist
+                latent = latent_dist.sample()
 
-        # Apply scaling
-        latent = latent * self.SCALING_FACTOR
+            # Apply scaling
+            latent = latent * self.SCALING_FACTOR
 
-        return latent
+            return latent
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="encoding image to latent",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise GeneratorError(operation="VAE encode", original_error=e) from e

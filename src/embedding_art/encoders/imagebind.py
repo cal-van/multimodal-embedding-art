@@ -14,6 +14,13 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from embedding_art.exceptions import (
+    EncoderError,
+    ImageBindNotInstalledError,
+    ModelLoadError,
+    OutOfMemoryError,
+)
+
 # ImageBind imports - will fail if not installed
 try:
     from imagebind import data as imagebind_data
@@ -47,16 +54,35 @@ class ImageBindEncoder:
         pretrained: bool = True,
     ):
         if not IMAGEBIND_AVAILABLE:
-            raise ImportError(
-                "ImageBind is not installed. Please install it:\n"
-                "  git clone https://github.com/facebookresearch/ImageBind\n"
-                "  cd ImageBind && pip install -e ."
-            )
+            raise ImageBindNotInstalledError()
 
         self._device = torch.device(device)
-        self.model = imagebind_model.imagebind_huge(pretrained=pretrained)
+
+        try:
+            self.model = imagebind_model.imagebind_huge(pretrained=pretrained)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="loading ImageBind model",
+                    device=device,
+                    original_error=e,
+                ) from e
+            raise ModelLoadError(model_name="ImageBind", original_error=e) from e
+        except OSError as e:
+            raise ModelLoadError(model_name="ImageBind", original_error=e) from e
+
         self.model.eval()
-        self.model.to(self._device)
+
+        try:
+            self.model.to(self._device)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="moving ImageBind model to device",
+                    device=device,
+                    original_error=e,
+                ) from e
+            raise
 
         # Freeze all parameters
         for param in self.model.parameters():
@@ -72,41 +98,59 @@ class ImageBindEncoder:
 
     def encode_text(self, text: str) -> torch.Tensor:
         """Encode text to embedding."""
-        inputs = {
-            ModalityType.TEXT: imagebind_data.load_and_transform_text([text], self._device)
-        }
+        try:
+            inputs = {
+                ModalityType.TEXT: imagebind_data.load_and_transform_text([text], self._device)
+            }
 
-        with torch.no_grad():
-            embeddings = self.model(inputs)
+            with torch.no_grad():
+                embeddings = self.model(inputs)
 
-        return F.normalize(embeddings[ModalityType.TEXT], dim=-1)
+            return F.normalize(embeddings[ModalityType.TEXT], dim=-1)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="encoding text",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise EncoderError(modality="text", original_error=e) from e
 
     def encode_image(self, image: Path | Image.Image | torch.Tensor) -> torch.Tensor:
         """Encode image to embedding."""
-        if isinstance(image, torch.Tensor):
-            # Already a tensor - use encode_for_optimization
-            return self.encode_for_optimization(image)
+        try:
+            if isinstance(image, torch.Tensor):
+                # Already a tensor - use encode_for_optimization
+                return self.encode_for_optimization(image)
 
-        if isinstance(image, Image.Image):
-            # Save to temp file for ImageBind's loader
-            import tempfile
+            if isinstance(image, Image.Image):
+                # Save to temp file for ImageBind's loader
+                import tempfile
 
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-                image.save(f.name)
-                image_path = f.name
-        else:
-            image_path = str(image)
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+                    image.save(f.name)
+                    image_path = f.name
+            else:
+                image_path = str(image)
 
-        inputs = {
-            ModalityType.VISION: imagebind_data.load_and_transform_vision_data(
-                [image_path], self._device
-            )
-        }
+            inputs = {
+                ModalityType.VISION: imagebind_data.load_and_transform_vision_data(
+                    [image_path], self._device
+                )
+            }
 
-        with torch.no_grad():
-            embeddings = self.model(inputs)
+            with torch.no_grad():
+                embeddings = self.model(inputs)
 
-        return F.normalize(embeddings[ModalityType.VISION], dim=-1)
+            return F.normalize(embeddings[ModalityType.VISION], dim=-1)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="encoding image",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise EncoderError(modality="image", original_error=e) from e
 
     def encode_for_optimization(self, image_tensor: torch.Tensor) -> torch.Tensor:
         """
@@ -115,24 +159,33 @@ class ImageBindEncoder:
         This method is differentiable and works with tensors that have gradients.
         The input should be [B, C, H, W] with values in [0, 1].
         """
-        # Resize to ImageBind's expected size
-        if image_tensor.shape[-2:] != (self.IMAGE_SIZE, self.IMAGE_SIZE):
-            image_tensor = F.interpolate(
-                image_tensor,
-                size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
-                mode="bilinear",
-                align_corners=False,
-            )
+        try:
+            # Resize to ImageBind's expected size
+            if image_tensor.shape[-2:] != (self.IMAGE_SIZE, self.IMAGE_SIZE):
+                image_tensor = F.interpolate(
+                    image_tensor,
+                    size=(self.IMAGE_SIZE, self.IMAGE_SIZE),
+                    mode="bilinear",
+                    align_corners=False,
+                )
 
-        # Normalize with ImageBind's normalization
-        mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=image_tensor.device)
-        std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=image_tensor.device)
-        image_tensor = (image_tensor - mean[None, :, None, None]) / std[None, :, None, None]
+            # Normalize with ImageBind's normalization
+            mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=image_tensor.device)
+            std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=image_tensor.device)
+            image_tensor = (image_tensor - mean[None, :, None, None]) / std[None, :, None, None]
 
-        # Get embedding through the vision encoder
-        embeddings = self.model({ModalityType.VISION: image_tensor})
+            # Get embedding through the vision encoder
+            embeddings = self.model({ModalityType.VISION: image_tensor})
 
-        return F.normalize(embeddings[ModalityType.VISION], dim=-1)
+            return F.normalize(embeddings[ModalityType.VISION], dim=-1)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="encoding image tensor",
+                    device=str(image_tensor.device),
+                    original_error=e,
+                ) from e
+            raise EncoderError(modality="image", original_error=e) from e
 
     def encode_audio(
         self,
@@ -141,22 +194,33 @@ class ImageBindEncoder:
         duration: float = 2.0,
     ) -> torch.Tensor:
         """Encode audio to embedding."""
-        if isinstance(audio, torch.Tensor):
-            # TODO: Handle tensor audio during optimization
-            raise NotImplementedError("Tensor audio encoding not yet implemented")
+        try:
+            if isinstance(audio, torch.Tensor):
+                # TODO: Handle tensor audio during optimization
+                raise NotImplementedError("Tensor audio encoding not yet implemented")
 
-        audio_path = str(audio)
+            audio_path = str(audio)
 
-        inputs = {
-            ModalityType.AUDIO: imagebind_data.load_and_transform_audio_data(
-                [audio_path], self._device
-            )
-        }
+            inputs = {
+                ModalityType.AUDIO: imagebind_data.load_and_transform_audio_data(
+                    [audio_path], self._device
+                )
+            }
 
-        with torch.no_grad():
-            embeddings = self.model(inputs)
+            with torch.no_grad():
+                embeddings = self.model(inputs)
 
-        return F.normalize(embeddings[ModalityType.AUDIO], dim=-1)
+            return F.normalize(embeddings[ModalityType.AUDIO], dim=-1)
+        except NotImplementedError:
+            raise
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="encoding audio",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise EncoderError(modality="audio", original_error=e) from e
 
     def encode_video(
         self,
@@ -164,20 +228,31 @@ class ImageBindEncoder:
         timestamp: float = 0.0,
     ) -> torch.Tensor:
         """Encode video frame to embedding."""
-        if isinstance(video, torch.Tensor):
-            # TODO: Handle tensor video during optimization
-            raise NotImplementedError("Tensor video encoding not yet implemented")
+        try:
+            if isinstance(video, torch.Tensor):
+                # TODO: Handle tensor video during optimization
+                raise NotImplementedError("Tensor video encoding not yet implemented")
 
-        video_path = str(video)
+            video_path = str(video)
 
-        # ImageBind's video loader samples 2 frames by default
-        inputs = {
-            ModalityType.VISION: imagebind_data.load_and_transform_video_data(
-                [video_path], self._device
-            )
-        }
+            # ImageBind's video loader samples 2 frames by default
+            inputs = {
+                ModalityType.VISION: imagebind_data.load_and_transform_video_data(
+                    [video_path], self._device
+                )
+            }
 
-        with torch.no_grad():
-            embeddings = self.model(inputs)
+            with torch.no_grad():
+                embeddings = self.model(inputs)
 
-        return F.normalize(embeddings[ModalityType.VISION], dim=-1)
+            return F.normalize(embeddings[ModalityType.VISION], dim=-1)
+        except NotImplementedError:
+            raise
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="encoding video",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise EncoderError(modality="video", original_error=e) from e

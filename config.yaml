@@ -1,0 +1,36 @@
+# Embedding Art Configuration
+# ===========================
+#
+# This file contains default configuration values for the embed-art CLI.
+# All values can be overridden via command-line arguments.
+#
+# To use a custom config file, use: embed-art --config /path/to/config.yaml
+
+optimization:
+  steps: 2000
+  learning_rate: 0.1
+  optimizer: adam        # Options: adam, adamw, sgd
+  scheduler: cosine      # Options: constant, cosine, linear
+
+  # Augmentation during optimization
+  augmentation:
+    random_crop: true
+    crop_scale: [0.8, 1.0]
+    random_flip: false
+    color_jitter: false
+
+  # Reproducibility
+  seed: null             # Set to an integer for reproducible results
+
+regularization:
+  total_variation: 0.01
+  spectral: 0.001
+  latent_norm: 0.1
+
+output:
+  checkpoint_every: 100
+  preview_every: 50
+
+# Device to use for computation
+# Options: mps (Apple Silicon), cuda (NVIDIA GPU), cpu
+device: mps

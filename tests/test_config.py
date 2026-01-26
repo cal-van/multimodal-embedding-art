@@ -1,14 +1,21 @@
 """
-Unit tests for configuration dataclasses.
+Unit tests for configuration dataclasses and YAML config loading.
 
-Tests verify behavior of AugmentationConfig and OptimizationConfig
-through their public API, ensuring defaults are correct and
-configuration can be customized as expected.
+Tests verify behavior of AugmentationConfig, OptimizationConfig,
+and the load_config function through their public API.
 """
+
+import os
+import tempfile
+from pathlib import Path
 
 import pytest
 
-from embedding_art.core.config import AugmentationConfig, OptimizationConfig
+from embedding_art.core.config import (
+    AugmentationConfig,
+    OptimizationConfig,
+    load_config,
+)
 
 
 # =============================================================================
@@ -275,3 +282,258 @@ class TestOptimizationConfigNested:
         config1.augmentation.random_crop = False
 
         assert config2.augmentation.random_crop is True
+
+
+# =============================================================================
+# load_config Tests
+# =============================================================================
+
+
+class TestLoadConfigFromFile:
+    """Tests for loading configuration from YAML files."""
+
+    def test_returns_dict_with_all_sections(self) -> None:
+        """load_config should return dict with optimization, regularization, output, device."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+optimization:
+  steps: 1000
+  learning_rate: 0.05
+regularization:
+  total_variation: 0.02
+output:
+  checkpoint_every: 50
+device: cuda
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        assert "optimization" in config
+        assert "regularization" in config
+        assert "output" in config
+        assert "device" in config
+
+    def test_optimization_section_values(self) -> None:
+        """Optimization section should contain expected values from YAML."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+optimization:
+  steps: 1500
+  learning_rate: 0.2
+  optimizer: adamw
+  scheduler: linear
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        assert config["optimization"]["steps"] == 1500
+        assert config["optimization"]["learning_rate"] == 0.2
+        assert config["optimization"]["optimizer"] == "adamw"
+        assert config["optimization"]["scheduler"] == "linear"
+
+    def test_regularization_section_values(self) -> None:
+        """Regularization section should contain expected values from YAML."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+regularization:
+  total_variation: 0.05
+  spectral: 0.002
+  latent_norm: 0.15
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        assert config["regularization"]["total_variation"] == 0.05
+        assert config["regularization"]["spectral"] == 0.002
+        assert config["regularization"]["latent_norm"] == 0.15
+
+    def test_output_section_values(self) -> None:
+        """Output section should contain expected values from YAML."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+output:
+  checkpoint_every: 200
+  preview_every: 100
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        assert config["output"]["checkpoint_every"] == 200
+        assert config["output"]["preview_every"] == 100
+
+    def test_device_value(self) -> None:
+        """Device should be read correctly from YAML."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+device: mps
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        assert config["device"] == "mps"
+
+    def test_nonexistent_file_returns_empty_dict(self) -> None:
+        """Loading from nonexistent file should return empty dict."""
+        config = load_config("/nonexistent/path/config.yaml")
+
+        assert config == {}
+
+    def test_none_path_with_no_config_file_returns_empty_dict(
+        self, isolated_cwd: Path
+    ) -> None:
+        """Passing None when no config.yaml exists in CWD returns empty dict."""
+        config = load_config(None)
+
+        assert config == {}
+
+    def test_empty_file_returns_empty_dict(self) -> None:
+        """Loading an empty YAML file should return empty dict."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("")
+            f.flush()
+            config = load_config(f.name)
+
+        assert config == {}
+
+    def test_partial_config_missing_sections_are_not_present(self) -> None:
+        """Missing sections should not be present in the returned dict."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+optimization:
+  steps: 500
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        assert config["optimization"]["steps"] == 500
+        assert "regularization" not in config
+        assert "output" not in config
+
+    def test_accepts_path_object(self) -> None:
+        """load_config should accept Path objects, not just strings."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+device: cpu
+""")
+            f.flush()
+            config = load_config(Path(f.name))
+
+        assert config["device"] == "cpu"
+
+    def test_augmentation_section_values(self) -> None:
+        """Augmentation section within optimization should be parsed."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+optimization:
+  augmentation:
+    random_crop: false
+    crop_scale: [0.7, 0.9]
+    random_flip: true
+    color_jitter: true
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        aug = config["optimization"]["augmentation"]
+        assert aug["random_crop"] is False
+        assert aug["crop_scale"] == [0.7, 0.9]
+        assert aug["random_flip"] is True
+        assert aug["color_jitter"] is True
+
+
+class TestConfigToOptimizationConfig:
+    """Tests for converting loaded config dict to OptimizationConfig."""
+
+    def test_create_optimization_config_from_dict(self) -> None:
+        """Should be able to create OptimizationConfig from loaded config dict."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+optimization:
+  steps: 1000
+  learning_rate: 0.05
+  optimizer: adam
+  scheduler: cosine
+  checkpoint_every: 50
+  preview_every: 25
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        opt_config = OptimizationConfig(**config["optimization"])
+
+        assert opt_config.steps == 1000
+        assert opt_config.learning_rate == 0.05
+        assert opt_config.optimizer == "adam"
+        assert opt_config.scheduler == "cosine"
+        assert opt_config.checkpoint_every == 50
+        assert opt_config.preview_every == 25
+
+    def test_partial_config_uses_defaults(self) -> None:
+        """Partial config should use OptimizationConfig defaults for missing fields."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+optimization:
+  steps: 500
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        opt_config = OptimizationConfig(**config["optimization"])
+
+        assert opt_config.steps == 500
+        # Defaults from OptimizationConfig
+        assert opt_config.learning_rate == 0.1
+        assert opt_config.optimizer == "adam"
+        assert opt_config.scheduler == "cosine"
+
+    def test_augmentation_config_from_nested_dict(self) -> None:
+        """AugmentationConfig nested in optimization should be created correctly."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False, mode="w") as f:
+            f.write("""
+optimization:
+  augmentation:
+    random_crop: false
+    random_flip: true
+""")
+            f.flush()
+            config = load_config(f.name)
+
+        opt_config = OptimizationConfig(**config["optimization"])
+
+        assert isinstance(opt_config.augmentation, AugmentationConfig)
+        assert opt_config.augmentation.random_crop is False
+        assert opt_config.augmentation.random_flip is True
+
+
+class TestDefaultConfigPath:
+    """Tests for default config file discovery."""
+
+    def test_load_config_finds_default_config_yaml_in_cwd(self) -> None:
+        """When no path specified, should look for config.yaml in current directory."""
+        original_cwd = os.getcwd()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text("""
+device: test_device
+""")
+            os.chdir(tmpdir)
+
+            try:
+                config = load_config()
+                assert config.get("device") == "test_device"
+            finally:
+                os.chdir(original_cwd)
+
+    def test_load_config_no_default_file_returns_empty(self) -> None:
+        """When no default config exists and no path specified, return empty dict."""
+        original_cwd = os.getcwd()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+
+            try:
+                config = load_config()
+                assert config == {}
+            finally:
+                os.chdir(original_cwd)

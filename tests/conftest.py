@@ -292,3 +292,24 @@ def tmp_output_dir(tmp_path: Path) -> TypingGenerator[Path, None, None]:
     output_dir = tmp_path / "test_outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
     yield output_dir
+
+
+@pytest.fixture
+def isolated_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """
+    Fixture providing an isolated working directory for tests.
+
+    Changes the current working directory to a fresh temp directory
+    for the duration of the test. This ensures tests that depend on
+    CWD (like config file loading) don't interfere with each other
+    or pick up the project's actual config files.
+
+    Args:
+        tmp_path: pytest's built-in temporary path fixture
+        monkeypatch: pytest's monkeypatch fixture for safe patching
+
+    Returns:
+        Path to the isolated working directory
+    """
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
