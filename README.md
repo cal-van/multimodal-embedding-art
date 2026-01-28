@@ -104,6 +104,16 @@ embed-art interpolate -a "goldfish" -b "flamingo" -s 10 -o image -d outputs/inte
 # Inspect embeddings
 embed-art embed -t "goldfish" -s embeddings/goldfish.pt
 embed-art compare embeddings/goldfish.pt embeddings/orange.pt
+
+# Visualization
+embed-art visualize similarity checkpoint.pt
+embed-art visualize embeddings -t "cat" -t "dog" -t "car" --method tsne
+
+# Upscaling
+embed-art upscale input.png --scale 4 --output upscaled.png
+
+# Batch processing
+embed-art batch run batch_config.yaml
 ```
 
 ## Configuration
@@ -148,10 +158,10 @@ embedding-art/
 - [x] Image generation via SDXL VAE
 - [x] Concept algebra (add, subtract, slerp)
 - [x] CLI interface
-- [ ] Audio output via AudioLDM 2
-- [ ] Video output via SVD
-- [ ] Resolution upscaling
-- [ ] Batch processing
+- [x] Audio output via AudioLDM 2
+- [x] Video output via SVD
+- [x] Resolution upscaling
+- [x] Batch processing
 - [ ] Web UI
 
 ## License

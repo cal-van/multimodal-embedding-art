@@ -41,7 +41,7 @@ def test_cli_optimize_video_modality(mock_engine_setup):
     frames = [Image.new("RGB", (8, 8), color=(10, 20, 30)) for _ in range(3)]
     mocks["result"].get_final_video.return_value = frames
 
-    with patch("embedding_art.cli.main._save_video") as mock_save:
+    with patch("embedding_art.cli.commands.optimize.save_video") as mock_save:
         result = runner.invoke(
             cli,
             [
