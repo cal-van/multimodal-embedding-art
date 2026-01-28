@@ -93,9 +93,7 @@ class InvalidConfigError(EmbeddingArtError):
         self.value = value
         self.reason = reason
 
-        message = (
-            f"Invalid configuration for '{field}'.\n\n" f"Value: {value}\n" f"Reason: {reason}"
-        )
+        message = f"Invalid configuration for '{field}'.\n\nValue: {value}\nReason: {reason}"
         super().__init__(message)
 
 
@@ -106,7 +104,7 @@ class EncoderError(EmbeddingArtError):
         self.modality = modality
         self.original_error = original_error
 
-        message = f"Failed to encode {modality} input.\n\n" f"Original error: {original_error}"
+        message = f"Failed to encode {modality} input.\n\nOriginal error: {original_error}"
         super().__init__(message)
 
 
@@ -117,7 +115,7 @@ class GeneratorError(EmbeddingArtError):
         self.operation = operation
         self.original_error = original_error
 
-        message = f"Failed during {operation}.\n\n" f"Original error: {original_error}"
+        message = f"Failed during {operation}.\n\nOriginal error: {original_error}"
         super().__init__(message)
 
 

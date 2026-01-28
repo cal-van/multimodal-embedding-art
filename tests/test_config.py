@@ -9,14 +9,11 @@ import os
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from embedding_art.core.config import (
     AugmentationConfig,
     OptimizationConfig,
     load_config,
 )
-
 
 # =============================================================================
 # AugmentationConfig Tests
@@ -378,9 +375,7 @@ device: mps
 
         assert config == {}
 
-    def test_none_path_with_no_config_file_returns_empty_dict(
-        self, isolated_cwd: Path
-    ) -> None:
+    def test_none_path_with_no_config_file_returns_empty_dict(self, isolated_cwd: Path) -> None:
         """Passing None when no config.yaml exists in CWD returns empty dict."""
         config = load_config(None)
 

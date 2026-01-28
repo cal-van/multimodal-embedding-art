@@ -339,7 +339,9 @@ class TestSVDVideoGeneratorDecode:
 
         # After permute and flatten, input is [B*F, C, H, W]
         actual_latent = mock_vae.decode.call_args[0][0]
-        expected_latent = latent.permute(0, 2, 1, 3, 4).reshape(25, 4, 72, 128) / SVDVideoGenerator.SCALING_FACTOR
+        expected_latent = (
+            latent.permute(0, 2, 1, 3, 4).reshape(25, 4, 72, 128) / SVDVideoGenerator.SCALING_FACTOR
+        )
         assert torch.allclose(actual_latent, expected_latent, rtol=1e-5)
 
     @patch("embedding_art.generators.video.AutoencoderKLTemporalDecoder")

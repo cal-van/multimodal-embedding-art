@@ -9,7 +9,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 import torch
 from click.testing import CliRunner
 from PIL import Image

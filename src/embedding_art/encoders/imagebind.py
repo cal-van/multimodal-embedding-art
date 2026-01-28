@@ -8,7 +8,6 @@ Requires: pip install -e . from https://github.com/facebookresearch/ImageBind
 """
 
 from pathlib import Path
-from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -230,8 +229,16 @@ class ImageBindEncoder:
         """Encode video frame to embedding."""
         try:
             if isinstance(video, torch.Tensor):
-                # TODO: Handle tensor video during optimization
-                raise NotImplementedError("Tensor video encoding not yet implemented")
+                if video.ndim == 4:
+                    return self.encode_for_optimization(video)
+                if video.ndim != 5:
+                    raise ValueError("Video tensor must have shape [B, F, C, H, W]")
+
+                batch_size, num_frames, channels, height, width = video.shape
+                video_flat = video.view(batch_size * num_frames, channels, height, width)
+                embeddings = self.encode_for_optimization(video_flat)
+                embeddings = embeddings.view(batch_size, num_frames, -1).mean(dim=1)
+                return F.normalize(embeddings, dim=-1)
 
             video_path = str(video)
 

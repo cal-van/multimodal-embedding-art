@@ -5,8 +5,6 @@ These tests don't verify behavior - they just ensure the package
 structure is correct and all public modules are importable.
 """
 
-import pytest
-
 
 class TestPackageImports:
     """Verify all public modules can be imported."""

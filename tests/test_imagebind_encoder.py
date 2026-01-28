@@ -20,7 +20,6 @@ from PIL import Image
 from embedding_art.encoders.imagebind import IMAGEBIND_AVAILABLE, ImageBindEncoder
 from embedding_art.exceptions import ImageBindNotInstalledError
 
-
 SKIP_IF_IMAGEBIND_NOT_INSTALLED = pytest.mark.skipif(
     not IMAGEBIND_AVAILABLE,
     reason="ImageBind not installed. Install from https://github.com/facebookresearch/ImageBind",
@@ -183,9 +182,7 @@ class TestImageBindEncoderEncodeForOptimization:
         """Fixture providing an ImageBindEncoder instance."""
         return ImageBindEncoder(device="cpu", pretrained=True)
 
-    def test_encode_for_optimization_returns_correct_shape(
-        self, encoder: ImageBindEncoder
-    ) -> None:
+    def test_encode_for_optimization_returns_correct_shape(self, encoder: ImageBindEncoder) -> None:
         """encode_for_optimization should return tensor of shape [1, 1024]."""
         image_tensor = torch.rand(1, 3, 512, 512)
 
@@ -204,9 +201,7 @@ class TestImageBindEncoderEncodeForOptimization:
         norm = torch.norm(embedding, dim=-1)
         assert torch.allclose(norm, torch.tensor([1.0]), atol=1e-5)
 
-    def test_encode_for_optimization_handles_224x224_input(
-        self, encoder: ImageBindEncoder
-    ) -> None:
+    def test_encode_for_optimization_handles_224x224_input(self, encoder: ImageBindEncoder) -> None:
         """encode_for_optimization should handle ImageBind's native 224x224 size."""
         image_tensor = torch.rand(1, 3, 224, 224)
 
@@ -236,9 +231,7 @@ class TestImageBindEncoderCrossModalSimilarity:
         """Fixture providing an ImageBindEncoder instance."""
         return ImageBindEncoder(device="cpu", pretrained=True)
 
-    def test_text_and_image_embeddings_in_same_space(
-        self, encoder: ImageBindEncoder
-    ) -> None:
+    def test_text_and_image_embeddings_in_same_space(self, encoder: ImageBindEncoder) -> None:
         """Text and image embeddings should be in the same 1024-dim space."""
         text_embedding = encoder.encode_text("a red square")
         image = Image.new("RGB", (224, 224), color=(255, 0, 0))

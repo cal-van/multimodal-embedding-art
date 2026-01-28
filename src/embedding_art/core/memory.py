@@ -12,6 +12,10 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from embedding_art.exceptions import OutOfMemoryError
+
+
+DEFAULT_MEMORY_LIMIT_MB = 48 * 1024  # 48GB default limit
 
 
 @dataclass
@@ -22,6 +26,7 @@ class MemoryConfig:
     use_mixed_precision: bool = False
     empty_cache_every: int = 0
     track_memory: bool = False
+    memory_limit_mb: float = DEFAULT_MEMORY_LIMIT_MB
 
     @classmethod
     def low_memory(cls) -> "MemoryConfig":
@@ -35,6 +40,7 @@ class MemoryConfig:
             use_mixed_precision=True,
             empty_cache_every=10,
             track_memory=True,
+            memory_limit_mb=4 * 1024,  # Lower limit for low-memory mode
         )
 
 
@@ -57,7 +63,34 @@ class MemoryManager:
         self._config = config
         self._device = torch.device(device)
         self._device_type = self._get_device_type()
+        self._device_type = self._get_device_type()
         self._snapshots: list[dict[str, Any]] = []
+
+    def check_memory_limit(self) -> None:
+        """
+        Check if memory usage exceeds the configured limit.
+
+        Raises:
+            OutOfMemoryError: If usage exceeds limit.
+        """
+        if self._device_type == "cuda" and torch.cuda.is_available():
+            current = torch.cuda.memory_allocated() / (1024 * 1024)
+        elif self._device_type == "mps" and torch.backends.mps.is_available():
+            try:
+                current = torch.mps.current_allocated_memory() / (1024 * 1024)
+            except AttributeError:
+                return
+        else:
+            return
+
+        if current > self._config.memory_limit_mb:
+            raise OutOfMemoryError(
+                operation="memory_check",
+                device=str(self._device),
+                original_error=RuntimeError(
+                    f"Memory limit exceeded: {current:.1f}MB > {self._config.memory_limit_mb:.1f}MB"
+                ),
+            )
 
     @property
     def config(self) -> MemoryConfig:
@@ -235,6 +268,8 @@ class MemoryManager:
         """
         if not self._config.track_memory:
             return
+        
+        self.check_memory_limit()
 
         usage = self.get_memory_usage()
         self._snapshots.append(

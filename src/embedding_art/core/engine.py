@@ -5,128 +5,29 @@ This is the main loop that optimizes a latent to maximize similarity
 between its decoded output and a target concept embedding.
 """
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from time import time
-from typing import Any, Callable
+from typing import Any
 
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from rich.console import Console, Group
-from rich.live import Live
-from rich.panel import Panel
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
-from rich.table import Table
-from rich.text import Text
 
 from embedding_art.core.concept import Concept
 from embedding_art.core.config import OptimizationConfig
 from embedding_art.core.memory import MemoryConfig, MemoryManager
+from embedding_art.core.progress import (
+    NoOpProgressObserver,
+    ProgressConfig,
+    ProgressObserver,
+    SimpleProgressObserver,
+    VerboseProgressObserver,
+)
 from embedding_art.encoders.base import Encoder
 from embedding_art.generators.base import Generator
 from embedding_art.regularizers import CompositeRegularizer, Regularizer
-
-SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
-
-
-@dataclass
-class ProgressConfig:
-    """Configuration for progress display during optimization."""
-
-    enabled: bool = True
-    verbose: bool = False
-    show_loss_curve: bool = True
-    show_memory: bool = True
-
-
-def generate_sparkline(values: list[float], max_length: int = 30) -> str:
-    """
-    Generate a sparkline string from a list of values.
-
-    Args:
-        values: List of numeric values to visualize.
-        max_length: Maximum length of the sparkline.
-
-    Returns:
-        A string of sparkline characters representing the values.
-    """
-    if not values:
-        return ""
-
-    if len(values) > max_length:
-        step = len(values) / max_length
-        sampled = [values[int(i * step)] for i in range(max_length)]
-        values = sampled
-
-    min_val = min(values)
-    max_val = max(values)
-    value_range = max_val - min_val
-
-    if value_range == 0:
-        return SPARKLINE_CHARS[len(SPARKLINE_CHARS) // 2] * len(values)
-
-    result = []
-    for val in values:
-        normalized = (val - min_val) / value_range
-        index = int(normalized * (len(SPARKLINE_CHARS) - 1))
-        index = max(0, min(len(SPARKLINE_CHARS) - 1, index))
-        result.append(SPARKLINE_CHARS[index])
-
-    return "".join(result)
-
-
-def get_similarity_style(current: float, previous: float | None = None) -> str:
-    """
-    Get Rich style string for similarity value based on trend.
-
-    Args:
-        current: Current similarity value.
-        previous: Previous similarity value (for trend detection).
-
-    Returns:
-        A Rich style string (e.g., "bold green", "yellow", "red").
-    """
-    if previous is None:
-        return "bold white"
-
-    delta = current - previous
-    threshold = 0.001
-
-    if delta > threshold:
-        return "bold green"
-    elif delta < -threshold:
-        return "red"
-    else:
-        return "yellow dim"
-
-
-def get_memory_usage_mb(device: str) -> float | None:
-    """
-    Get current memory usage in MB for GPU devices.
-
-    Args:
-        device: The device string ("cpu", "mps", "cuda", etc.).
-
-    Returns:
-        Memory usage in MB, or None if not available/applicable.
-    """
-    device_type = device.split(":")[0] if ":" in device else device
-
-    if device_type == "cuda" and torch.cuda.is_available():
-        return torch.cuda.memory_allocated() / (1024 * 1024)
-    elif device_type == "mps" and torch.backends.mps.is_available():
-        try:
-            return torch.mps.current_allocated_memory() / (1024 * 1024)
-        except AttributeError:
-            return None
-    return None
 
 
 @dataclass
@@ -155,9 +56,43 @@ class OptimizationResult:
         with torch.no_grad():
             decoded = generator.decode(self.final_latent)
             # Convert to PIL
-            img_array = decoded[0].permute(1, 2, 0).cpu().numpy()
-            img_array = (img_array * 255).clip(0, 255).astype("uint8")
+            img = decoded[0].detach().cpu().permute(1, 2, 0).numpy()
+            img_array = (img * 255).clip(0, 255).astype("uint8")
             return Image.fromarray(img_array)
+
+    def get_final_audio(self, generator: Generator) -> tuple[int, Any]:
+        """
+        Decode final latent to audio.
+
+        Returns:
+            (sample_rate, waveform_numpy)
+        """
+        with torch.no_grad():
+            audio = generator.decode(self.final_latent)
+            # [B, Samples] -> [Samples]
+            audio_np = audio[0].cpu().numpy()
+            return generator.SAMPLE_RATE, audio_np
+
+    def get_final_video(self, generator: Generator) -> list[Image.Image]:
+        """
+        Decode final latent to video frames.
+
+        Returns:
+            List of PIL frames in order.
+        """
+        with torch.no_grad():
+            decoded = generator.decode(self.final_latent)
+
+        if decoded.ndim != 5:
+            raise ValueError("Decoded video must have shape [B, F, C, H, W]")
+
+        frames = []
+        for frame in decoded[0].detach().cpu():
+            frame = frame.permute(1, 2, 0).clamp(0, 1)
+            frame_np = (frame * 255).to(torch.uint8).numpy()
+            frames.append(Image.fromarray(frame_np))
+
+        return frames
 
 
 class EmbeddingArtEngine:
@@ -233,9 +168,23 @@ class EmbeddingArtEngine:
 
         progress_config = self._normalize_progress_config(progress)
 
+        # Setup progress observer
+        observer: ProgressObserver
+        if not progress_config.enabled:
+            observer = NoOpProgressObserver()
+        elif progress_config.verbose:
+            observer = VerboseProgressObserver(progress_config)
+        else:
+            observer = SimpleProgressObserver()
+
         # Setup regularizers
         if regularizers is None:
-            regularizers = CompositeRegularizer.default_image()
+            if output_modality == "audio":
+                regularizers = CompositeRegularizer.default_audio()
+            elif output_modality == "video":
+                regularizers = CompositeRegularizer.default_video()
+            else:
+                regularizers = CompositeRegularizer.default_image()
         elif isinstance(regularizers, list):
             regularizers = CompositeRegularizer(regularizers)
 
@@ -260,8 +209,6 @@ class EmbeddingArtEngine:
         scheduler = self._create_scheduler(optimizer, config)
 
         # Advance scheduler to correct position if resuming
-        # The warning about calling scheduler.step() before optimizer.step() is expected
-        # here since we're fast-forwarding the scheduler to match the checkpoint position
         if resume_from is not None and scheduler is not None:
             import warnings
 
@@ -285,46 +232,45 @@ class EmbeddingArtEngine:
 
         start_time = time()
 
-        if progress_config.enabled and progress_config.verbose:
-            elapsed = self._run_verbose_optimization(
-                latent=latent,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                generator=generator,
-                regularizers=regularizers,
-                target_embedding=target_embedding,
-                output_modality=output_modality,
-                config=config,
-                progress_config=progress_config,
-                loss_history=loss_history,
-                similarity_history=similarity_history,
-                checkpoints=checkpoints,
-                callback=callback,
-                start_time=start_time,
-                checkpoint_dir=checkpoint_path,
-                start_step=start_step,
-                memory_manager=memory_manager,
-            )
-        else:
-            elapsed = self._run_simple_optimization(
-                latent=latent,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                generator=generator,
-                regularizers=regularizers,
-                target_embedding=target_embedding,
-                output_modality=output_modality,
-                config=config,
-                progress_config=progress_config,
-                loss_history=loss_history,
-                similarity_history=similarity_history,
-                checkpoints=checkpoints,
-                callback=callback,
-                start_time=start_time,
-                checkpoint_dir=checkpoint_path,
-                start_step=start_step,
-                memory_manager=memory_manager,
-            )
+        observer.on_start(total_steps=config.steps)
+
+        try:
+            for step in range(start_step, config.steps):
+                loss_val, sim_val = self._optimization_step(
+                    step=step,
+                    latent=latent,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    generator=generator,
+                    regularizers=regularizers,
+                    target_embedding=target_embedding,
+                    output_modality=output_modality,
+                    config=config,
+                    loss_history=loss_history,
+                    similarity_history=similarity_history,
+                    checkpoints=checkpoints,
+                    callback=callback,
+                    checkpoint_dir=checkpoint_path,
+                    memory_manager=memory_manager,
+                )
+
+                current_lr = None
+                if scheduler is not None:
+                    current_lr = scheduler.get_last_lr()[0]
+
+                observer.on_step(
+                    step=step,
+                    loss=loss_val,
+                    similarity=sim_val,
+                    lr=current_lr,
+                    loss_history=loss_history,
+                    similarity_history=similarity_history,
+                    device=str(self.device),
+                )
+        finally:
+            observer.on_finish()
+
+        elapsed = time() - start_time
 
         # Final encoding (without augmentation)
         with torch.no_grad():
@@ -376,7 +322,13 @@ class EmbeddingArtEngine:
         if not aug_config.random_crop and not aug_config.random_flip:
             return decoded
 
+        # Audio or other non-spatial modalities shouldn't be augmented with spatial ops
+        # ImageBind audio input is [B, T], images are [B, C, H, W]
+        if decoded.ndim != 4:
+            return decoded
+
         augmented = decoded
+        is_video = decoded.ndim == 5
 
         if aug_config.random_crop:
             # Random crop and resize back
@@ -387,8 +339,21 @@ class EmbeddingArtEngine:
             top = torch.randint(0, h - crop_h + 1, (1,)).item()
             left = torch.randint(0, w - crop_w + 1, (1,)).item()
 
-            augmented = augmented[:, :, top : top + crop_h, left : left + crop_w]
-            augmented = F.interpolate(augmented, size=(h, w), mode="bilinear", align_corners=False)
+            if is_video:
+                augmented = augmented[:, :, :, top : top + crop_h, left : left + crop_w]
+                batch_size, num_frames, channels, _, _ = augmented.shape
+                augmented = augmented.reshape(
+                    batch_size * num_frames, channels, crop_h, crop_w
+                )
+                augmented = F.interpolate(
+                    augmented, size=(h, w), mode="bilinear", align_corners=False
+                )
+                augmented = augmented.reshape(batch_size, num_frames, channels, h, w)
+            else:
+                augmented = augmented[:, :, top : top + crop_h, left : left + crop_w]
+                augmented = F.interpolate(
+                    augmented, size=(h, w), mode="bilinear", align_corners=False
+                )
 
         if aug_config.random_flip and torch.rand(1).item() > 0.5:
             augmented = torch.flip(augmented, dims=[-1])
@@ -466,173 +431,9 @@ class EmbeddingArtEngine:
         path = Path(checkpoint_path)
         if not path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {path}")
-        return torch.load(path, weights_only=False)
+        return torch.load(path, weights_only=True)
 
-    def _run_simple_optimization(
-        self,
-        latent: torch.Tensor,
-        optimizer: torch.optim.Optimizer,
-        scheduler: torch.optim.lr_scheduler.LRScheduler | None,
-        generator: Generator,
-        regularizers: CompositeRegularizer,
-        target_embedding: torch.Tensor,
-        output_modality: str,
-        config: OptimizationConfig,
-        progress_config: ProgressConfig,
-        loss_history: list[float],
-        similarity_history: list[float],
-        checkpoints: list[tuple[int, torch.Tensor]],
-        callback: Callable[[int, float, float, torch.Tensor], None] | None,
-        start_time: float,
-        checkpoint_dir: Path | None = None,
-        start_step: int = 0,
-        memory_manager: MemoryManager | None = None,
-    ) -> float:
-        """Run optimization with simple progress bar."""
-        progress_ctx = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeRemainingColumn(),
-            disable=not progress_config.enabled,
-        )
 
-        remaining_steps = config.steps - start_step
-
-        with progress_ctx as pbar:
-            task = pbar.add_task("Optimizing...", total=remaining_steps)
-
-            for step in range(start_step, config.steps):
-                loss_val, sim_val = self._optimization_step(
-                    step=step,
-                    latent=latent,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    generator=generator,
-                    regularizers=regularizers,
-                    target_embedding=target_embedding,
-                    output_modality=output_modality,
-                    config=config,
-                    loss_history=loss_history,
-                    similarity_history=similarity_history,
-                    checkpoints=checkpoints,
-                    callback=callback,
-                    checkpoint_dir=checkpoint_dir,
-                    memory_manager=memory_manager,
-                )
-
-                pbar.update(task, advance=1, description=f"sim={sim_val:.4f}")
-
-        return time() - start_time
-
-    def _run_verbose_optimization(
-        self,
-        latent: torch.Tensor,
-        optimizer: torch.optim.Optimizer,
-        scheduler: torch.optim.lr_scheduler.LRScheduler | None,
-        generator: Generator,
-        regularizers: CompositeRegularizer,
-        target_embedding: torch.Tensor,
-        output_modality: str,
-        config: OptimizationConfig,
-        progress_config: ProgressConfig,
-        loss_history: list[float],
-        similarity_history: list[float],
-        checkpoints: list[tuple[int, torch.Tensor]],
-        callback: Callable[[int, float, float, torch.Tensor], None] | None,
-        start_time: float,
-        checkpoint_dir: Path | None = None,
-        start_step: int = 0,
-        memory_manager: MemoryManager | None = None,
-    ) -> float:
-        """Run optimization with verbose Rich display."""
-        console = Console()
-        device_str = str(self.device)
-
-        def build_display(
-            step: int,
-            total_steps: int,
-            sim_val: float,
-            loss_val: float,
-            lr: float | None,
-        ) -> Group:
-            """Build the Rich display group."""
-            progress_bar = Progress(
-                SpinnerColumn(),
-                TextColumn("[bold]{task.description}"),
-                BarColumn(bar_width=40),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                TimeRemainingColumn(),
-            )
-            progress_bar.add_task("Optimizing...", completed=step, total=total_steps)
-
-            metrics_table = Table.grid(padding=(0, 2))
-            metrics_table.add_column("Label", style="dim")
-            metrics_table.add_column("Value")
-
-            prev_sim = similarity_history[-2] if len(similarity_history) >= 2 else None
-            sim_style = get_similarity_style(sim_val, prev_sim)
-            sim_text = Text(f"{sim_val:.4f}", style=sim_style)
-            metrics_table.add_row("Similarity:", sim_text)
-            metrics_table.add_row("Loss:", f"{loss_val:.4f}")
-
-            if lr is not None:
-                metrics_table.add_row("Learning Rate:", f"{lr:.2e}")
-
-            if progress_config.show_memory:
-                mem_mb = get_memory_usage_mb(device_str)
-                if mem_mb is not None:
-                    metrics_table.add_row("Memory:", f"{mem_mb:.1f} MB")
-
-            elements: list = [progress_bar, metrics_table]
-
-            if progress_config.show_loss_curve and loss_history:
-                sparkline = generate_sparkline(loss_history)
-                loss_curve_text = Text(f"Loss: {sparkline}", style="cyan")
-                elements.append(loss_curve_text)
-
-                if similarity_history:
-                    sim_sparkline = generate_sparkline(similarity_history)
-                    sim_curve_text = Text(f"Sim:  {sim_sparkline}", style="green")
-                    elements.append(sim_curve_text)
-
-            return Group(*elements)
-
-        with Live(console=console, refresh_per_second=4) as live:
-            for step in range(start_step, config.steps):
-                loss_val, sim_val = self._optimization_step(
-                    step=step,
-                    latent=latent,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    generator=generator,
-                    regularizers=regularizers,
-                    target_embedding=target_embedding,
-                    output_modality=output_modality,
-                    config=config,
-                    loss_history=loss_history,
-                    similarity_history=similarity_history,
-                    checkpoints=checkpoints,
-                    callback=callback,
-                    checkpoint_dir=checkpoint_dir,
-                    memory_manager=memory_manager,
-                )
-
-                lr = None
-                if scheduler is not None:
-                    lr = scheduler.get_last_lr()[0]
-
-                display = build_display(
-                    step=step + 1,
-                    total_steps=config.steps,
-                    sim_val=sim_val,
-                    loss_val=loss_val,
-                    lr=lr,
-                )
-                live.update(Panel(display, title="Optimization Progress", border_style="blue"))
-
-        return time() - start_time
 
     def _optimization_step(
         self,
@@ -692,9 +493,10 @@ class EmbeddingArtEngine:
         if callback is not None:
             callback(step, loss_val, sim_val, latent)
 
-        # Clear cache at configured intervals
-        if memory_manager is not None and memory_manager.should_empty_cache(step):
-            memory_manager.empty_cache()
+        if memory_manager is not None:
+            memory_manager.check_memory_limit()
+            if memory_manager.should_empty_cache(step):
+                memory_manager.empty_cache()
 
         return loss_val, sim_val
 

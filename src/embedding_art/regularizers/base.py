@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 import torch
-import torch.nn.functional as F
 
 
 class Regularizer(Protocol):
@@ -167,5 +166,41 @@ class CompositeRegularizer:
                 TotalVariation(weight=0.1),
                 SpectralRegularizer(weight=0.01),
                 LatentNorm(weight=0.5),
+            ]
+        )
+
+    @classmethod
+    def default_audio(cls) -> "CompositeRegularizer":
+        """
+        Default regularization for audio optimization.
+
+        Uses anisotropic TV to smooth frequency more than time,
+        plus LatentNorm to keep values in range.
+        """
+        from embedding_art.regularizers.audio import AudioTotalVariation
+
+        return cls(
+            regularizers=[
+                # Audio needs strong frequency smoothing to avoid high-pitch noise
+                AudioTotalVariation(freq_weight=2.0, time_weight=0.5, weight=0.05),
+                # Keep latent distribution healthy
+                LatentNorm(weight=0.1),
+            ]
+        )
+
+    @classmethod
+    def default_video(cls) -> "CompositeRegularizer":
+        """
+        Default regularization for video optimization.
+
+        Uses temporal coherence to reduce flicker between frames,
+        plus LatentNorm to keep values in range.
+        """
+        from embedding_art.regularizers.video import TemporalCoherence
+
+        return cls(
+            regularizers=[
+                TemporalCoherence(weight=0.05),
+                LatentNorm(weight=0.1),
             ]
         )

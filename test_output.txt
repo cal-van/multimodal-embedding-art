@@ -1,0 +1,43 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.11.13, pytest-9.0.2, pluggy-1.6.0 -- /Users/cal/Documents/GitHub/multimodal-embedding-art/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/cal/Documents/GitHub/multimodal-embedding-art
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collecting ... collected 2 items
+
+tests/test_cli_audio.py::test_cli_optimize_audio_modality 
+CLI Output: Loading models...
+Target: text:"thunder"
+Optimizing for 2 steps...
+Unexpected Error: TypeError: optimizer can only optimize Tensors, but one of 
+the params is unittest.mock.MagicMock
+Use --debug for full traceback
+
+CLI Exception: 1
+FAILED
+tests/test_cli_audio.py::test_cli_check_audio_imports_error PASSED
+
+=================================== FAILURES ===================================
+_______________________ test_cli_optimize_audio_modality _______________________
+tests/test_cli_audio.py:58: in test_cli_optimize_audio_modality
+    assert result.exit_code == 0
+E   assert 1 == 0
+E    +  where 1 = <Result SystemExit(1)>.exit_code
+=============================== warnings summary ===============================
+.venv/lib/python3.11/site-packages/torch/jit/_script.py:1480
+  /Users/cal/Documents/GitHub/multimodal-embedding-art/.venv/lib/python3.11/site-packages/torch/jit/_script.py:1480: DeprecationWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+.venv/lib/python3.11/site-packages/diffusers/models/transformers/transformer_kandinsky.py:168
+  /Users/cal/Documents/GitHub/multimodal-embedding-art/.venv/lib/python3.11/site-packages/diffusers/models/transformers/transformer_kandinsky.py:168: UserWarning: CUDA is not available or torch_xla is imported. Disabling autocast.
+    @torch.autocast(device_type="cuda", dtype=torch.float32)
+
+.venv/lib/python3.11/site-packages/diffusers/models/transformers/transformer_kandinsky.py:272
+  /Users/cal/Documents/GitHub/multimodal-embedding-art/.venv/lib/python3.11/site-packages/diffusers/models/transformers/transformer_kandinsky.py:272: UserWarning: CUDA is not available or torch_xla is imported. Disabling autocast.
+    @torch.autocast(device_type="cuda", dtype=torch.float32)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_cli_audio.py::test_cli_optimize_audio_modality - assert 1 == 0
+=================== 1 failed, 1 passed, 3 warnings in 4.56s ====================

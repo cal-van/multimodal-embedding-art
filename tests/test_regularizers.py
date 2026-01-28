@@ -15,7 +15,6 @@ from embedding_art.regularizers.base import (
     TotalVariation,
 )
 
-
 # =============================================================================
 # Test Fixtures
 # =============================================================================
@@ -126,7 +125,10 @@ class TestTotalVariation:
         assert loss.item() == 0.0
 
     def test_returns_higher_loss_for_sharp_edges_than_smooth(
-        self, normal_latent: torch.Tensor, smooth_image: torch.Tensor, sharp_edge_image: torch.Tensor
+        self,
+        normal_latent: torch.Tensor,
+        smooth_image: torch.Tensor,
+        sharp_edge_image: torch.Tensor,
     ) -> None:
         """Images with sharp edges should have higher TV loss than smooth gradients."""
         regularizer = TotalVariation(weight=1.0)
@@ -207,9 +209,12 @@ class TestSpectralRegularizer:
         batch_size, channels, height, width = 1, 3, 64, 64
         x = torch.linspace(0, 8 * 3.14159, width).unsqueeze(0).expand(height, width)
         mid_freq_pattern = torch.sin(x)
-        mid_freq_image = mid_freq_pattern.unsqueeze(0).unsqueeze(0).expand(
-            batch_size, channels, height, width
-        ).clone()
+        mid_freq_image = (
+            mid_freq_pattern.unsqueeze(0)
+            .unsqueeze(0)
+            .expand(batch_size, channels, height, width)
+            .clone()
+        )
 
         loss_high_threshold = regularizer_high_threshold(normal_latent, decoded=mid_freq_image)
         loss_low_threshold = regularizer_low_threshold(normal_latent, decoded=mid_freq_image)

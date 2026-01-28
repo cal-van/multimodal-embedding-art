@@ -5,8 +5,8 @@ Provides mock implementations of encoders and generators for testing,
 along with common test utilities like sample embeddings and temporary directories.
 """
 
+from collections.abc import Generator as TypingGenerator
 from pathlib import Path
-from typing import Generator as TypingGenerator
 
 import pytest
 import torch

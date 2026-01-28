@@ -4,10 +4,6 @@ Tests for progress reporting functionality in the optimization engine.
 These tests verify the behavior of progress display options and metrics reporting.
 """
 
-from dataclasses import dataclass
-from typing import Literal
-from unittest.mock import MagicMock, patch
-
 import pytest
 import torch
 
@@ -235,7 +231,7 @@ class TestSparklineGeneration:
 
     def test_generate_sparkline_empty_list(self) -> None:
         """Sparkline should handle empty list gracefully."""
-        from embedding_art.core.engine import generate_sparkline
+        from embedding_art.core.progress import generate_sparkline
 
         result = generate_sparkline([])
 
@@ -243,7 +239,7 @@ class TestSparklineGeneration:
 
     def test_generate_sparkline_single_value(self) -> None:
         """Sparkline should handle single value."""
-        from embedding_art.core.engine import generate_sparkline
+        from embedding_art.core.progress import generate_sparkline
 
         result = generate_sparkline([0.5])
 
@@ -252,7 +248,7 @@ class TestSparklineGeneration:
 
     def test_generate_sparkline_increasing_values(self) -> None:
         """Sparkline should show increasing pattern for increasing values."""
-        from embedding_art.core.engine import generate_sparkline
+        from embedding_art.core.progress import generate_sparkline
 
         values = [0.0, 0.25, 0.5, 0.75, 1.0]
         result = generate_sparkline(values)
@@ -261,7 +257,7 @@ class TestSparklineGeneration:
 
     def test_generate_sparkline_respects_max_length(self) -> None:
         """Sparkline should respect max_length parameter."""
-        from embedding_art.core.engine import generate_sparkline
+        from embedding_art.core.progress import generate_sparkline
 
         values = list(range(100))
         result = generate_sparkline(values, max_length=20)
@@ -270,7 +266,7 @@ class TestSparklineGeneration:
 
     def test_generate_sparkline_constant_values(self) -> None:
         """Sparkline should handle constant values."""
-        from embedding_art.core.engine import generate_sparkline
+        from embedding_art.core.progress import generate_sparkline
 
         values = [0.5, 0.5, 0.5, 0.5, 0.5]
         result = generate_sparkline(values)
@@ -283,7 +279,7 @@ class TestColorCoding:
 
     def test_improving_similarity_color(self) -> None:
         """Improving similarity should get positive color code."""
-        from embedding_art.core.engine import get_similarity_style
+        from embedding_art.core.progress import get_similarity_style
 
         style = get_similarity_style(current=0.8, previous=0.7)
 
@@ -291,7 +287,7 @@ class TestColorCoding:
 
     def test_stagnant_similarity_color(self) -> None:
         """Stagnant similarity should get neutral/warning color code."""
-        from embedding_art.core.engine import get_similarity_style
+        from embedding_art.core.progress import get_similarity_style
 
         style = get_similarity_style(current=0.5, previous=0.5)
 
@@ -299,7 +295,7 @@ class TestColorCoding:
 
     def test_declining_similarity_color(self) -> None:
         """Declining similarity should get negative color code."""
-        from embedding_art.core.engine import get_similarity_style
+        from embedding_art.core.progress import get_similarity_style
 
         style = get_similarity_style(current=0.4, previous=0.5)
 
@@ -311,7 +307,7 @@ class TestMemoryUsageTracking:
 
     def test_get_memory_usage_cpu(self) -> None:
         """Memory usage should return None on CPU."""
-        from embedding_art.core.engine import get_memory_usage_mb
+        from embedding_art.core.progress import get_memory_usage_mb
 
         result = get_memory_usage_mb("cpu")
 
@@ -323,7 +319,7 @@ class TestMemoryUsageTracking:
     )
     def test_get_memory_usage_mps(self) -> None:
         """Memory usage should return a value on MPS if available."""
-        from embedding_art.core.engine import get_memory_usage_mb
+        from embedding_art.core.progress import get_memory_usage_mb
 
         result = get_memory_usage_mb("mps")
 
@@ -335,7 +331,7 @@ class TestMemoryUsageTracking:
     )
     def test_get_memory_usage_cuda(self) -> None:
         """Memory usage should return a value on CUDA if available."""
-        from embedding_art.core.engine import get_memory_usage_mb
+        from embedding_art.core.progress import get_memory_usage_mb
 
         result = get_memory_usage_mb("cuda")
 

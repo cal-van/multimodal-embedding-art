@@ -65,7 +65,9 @@ class Concept:
         """Create concept from audio file."""
         path = Path(audio)
         embedding = encoder.encode_audio(path, start=start, duration=duration)
-        return cls(embedding=embedding, description=f"audio:{path.name}[{start}:{start+duration}]")
+        return cls(
+            embedding=embedding, description=f"audio:{path.name}[{start}:{start + duration}]"
+        )
 
     @classmethod
     def from_video(
@@ -91,7 +93,7 @@ class Concept:
     @classmethod
     def load(cls, path: Path | str) -> Concept:
         """Load concept from saved .pt file."""
-        data = torch.load(path, weights_only=False)
+        data = torch.load(path, weights_only=True)
         return cls(
             embedding=data["embedding"],
             description=data.get("description", str(path)),

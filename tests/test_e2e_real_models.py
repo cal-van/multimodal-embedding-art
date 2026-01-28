@@ -22,7 +22,7 @@ from embedding_art.generators.image import SDXLImageGenerator
 from embedding_art.regularizers import CompositeRegularizer
 
 try:
-    from embedding_art.encoders.imagebind import ImageBindEncoder, IMAGEBIND_AVAILABLE
+    from embedding_art.encoders.imagebind import IMAGEBIND_AVAILABLE, ImageBindEncoder
 except ImportError:
     IMAGEBIND_AVAILABLE = False
     ImageBindEncoder = None
@@ -196,9 +196,7 @@ class TestEndToEndOptimization:
         )
 
     @pytest.mark.slow
-    def test_result_can_be_decoded_to_valid_image(
-        self, real_engine, real_encoder, real_generator
-    ):
+    def test_result_can_be_decoded_to_valid_image(self, real_engine, real_encoder, real_generator):
         """
         Should produce a valid PIL Image from the optimization result.
 

@@ -18,6 +18,7 @@ Example:
     result.get_final_image(generator).save('goldfish.png')
 """
 
+from embedding_art import upscalers
 from embedding_art.core import (
     AugmentationConfig,
     Concept,
@@ -26,7 +27,6 @@ from embedding_art.core import (
     OptimizationResult,
 )
 from embedding_art.regularizers import CompositeRegularizer
-from embedding_art import upscalers
 
 __version__ = "0.1.0"
 

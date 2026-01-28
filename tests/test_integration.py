@@ -66,7 +66,7 @@ class MockEncoder:
         """
         b, c, h, w = image.shape
 
-        grid_size = int(self._embedding_dim ** 0.5)
+        grid_size = int(self._embedding_dim**0.5)
         if grid_size * grid_size > self._embedding_dim:
             grid_size = grid_size - 1
 
@@ -80,9 +80,7 @@ class MockEncoder:
             for j in range(grid_size):
                 if idx >= self._embedding_dim:
                     break
-                cell = image[
-                    :, :, i * cell_h : (i + 1) * cell_h, j * cell_w : (j + 1) * cell_w
-                ]
+                cell = image[:, :, i * cell_h : (i + 1) * cell_h, j * cell_w : (j + 1) * cell_w]
                 embedding[:, idx] = cell.mean(dim=(1, 2, 3))
                 idx += 1
 
@@ -136,9 +134,9 @@ class MockGenerator:
         self._output_modality = "image"
 
         torch.manual_seed(42)
-        self._weights = torch.randn(
-            latent_dim, 3 * output_size * output_size, device=self._device
-        ) * 0.01
+        self._weights = (
+            torch.randn(latent_dim, 3 * output_size * output_size, device=self._device) * 0.01
+        )
 
     @property
     def latent_shape(self) -> tuple[int, ...]:
@@ -157,9 +155,7 @@ class MockGenerator:
         if seed is not None:
             torch.manual_seed(seed)
 
-        latent = torch.randn(
-            *self._latent_shape, device=self._device, requires_grad=True
-        )
+        latent = torch.randn(*self._latent_shape, device=self._device, requires_grad=True)
         return latent
 
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
@@ -184,9 +180,7 @@ def create_test_engine(
 ) -> tuple[EmbeddingArtEngine, MockEncoder, MockGenerator]:
     """Create a test engine with mock encoder and generator."""
     encoder = MockEncoder(embedding_dim=embedding_dim, device=device)
-    generator = MockGenerator(
-        latent_dim=latent_dim, output_size=output_size, device=device
-    )
+    generator = MockGenerator(latent_dim=latent_dim, output_size=output_size, device=device)
 
     engine = EmbeddingArtEngine(encoder=encoder, device=device)
     engine.register_generator("image", generator)
@@ -194,9 +188,7 @@ def create_test_engine(
     return engine, encoder, generator
 
 
-def create_test_concept(
-    encoder: MockEncoder, text: str = "test concept"
-) -> Concept:
+def create_test_concept(encoder: MockEncoder, text: str = "test concept") -> Concept:
     """Create a test concept from text."""
     return Concept.from_text(text, encoder)
 
@@ -293,9 +285,7 @@ class TestOptimizationLoopRunsAndImproves:
 
         callback_calls: list[tuple[int, float, float, Any]] = []
 
-        def track_callback(
-            step: int, loss: float, similarity: float, latent: torch.Tensor
-        ) -> None:
+        def track_callback(step: int, loss: float, similarity: float, latent: torch.Tensor) -> None:
             callback_calls.append((step, loss, similarity, latent.clone()))
 
         config = OptimizationConfig(
@@ -453,12 +443,8 @@ class TestInterpolationSeries:
         first_target = results[0].target_embedding
         last_target = results[-1].target_embedding
 
-        sim_first_to_a = F.cosine_similarity(
-            first_target, concept_a.embedding, dim=-1
-        ).item()
-        sim_last_to_b = F.cosine_similarity(
-            last_target, concept_b.embedding, dim=-1
-        ).item()
+        sim_first_to_a = F.cosine_similarity(first_target, concept_a.embedding, dim=-1).item()
+        sim_last_to_b = F.cosine_similarity(last_target, concept_b.embedding, dim=-1).item()
 
         assert sim_first_to_a > 0.99, f"First result should target concept_a: {sim_first_to_a}"
         assert sim_last_to_b > 0.99, f"Last result should target concept_b: {sim_last_to_b}"

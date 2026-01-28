@@ -7,6 +7,7 @@ from embedding_art.regularizers.base import (
     SpectralRegularizer,
     TotalVariation,
 )
+from embedding_art.regularizers.video import TemporalCoherence
 
 __all__ = [
     "Regularizer",
@@ -14,4 +15,5 @@ __all__ = [
     "SpectralRegularizer",
     "LatentNorm",
     "CompositeRegularizer",
+    "TemporalCoherence",
 ]
