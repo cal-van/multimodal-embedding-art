@@ -1,9 +1,9 @@
 """
 Tests for AudioLDMGenerator.
 
-These tests verify the AudioLDM 2 VAE generator stub class exists with
-the expected properties and documented constants. The actual implementation
-tests are skipped until the generator is fully implemented.
+Tests are organized into:
+- Fast tests: Verify constants and calculation logic (no model loading)
+- Slow tests (@pytest.mark.slow): Verify actual model functionality (require model download)
 
 AudioLDM 2 Architecture Summary (for test reference)
 ====================================================
@@ -11,8 +11,9 @@ AudioLDM 2 Architecture Summary (for test reference)
 - Latent height: 16 (from 64 mel bins / 4 compression)
 - Latent width: varies with audio length
 - VAE scale factor: 4 (compression ratio)
+- Scaling factor: 0.4110932946205139
 - Mel bins: 64
-- Sample rate: 16 kHz
+- Sample rate: 16 kHz (vocoder output)
 - Default audio length: 10.24 seconds
 """
 
@@ -64,13 +65,13 @@ class TestAudioLDMGeneratorConstants:
         """
         assert AudioLDMGenerator.VAE_SCALE_FACTOR == 4
 
-    def test_scaling_factor_should_be_approximately_0_18(self) -> None:
+    def test_scaling_factor_should_be_approximately_0_41(self) -> None:
         """
-        Latent scaling factor similar to Stable Diffusion.
+        Latent scaling factor for AudioLDM2 VAE.
 
-        This normalizes the latent distribution for diffusion training.
+        This is different from Stable Diffusion (0.18215) - AudioLDM2 uses 0.4110932946205139.
         """
-        assert 0.1 < AudioLDMGenerator.SCALING_FACTOR < 0.25
+        assert 0.35 < AudioLDMGenerator.SCALING_FACTOR < 0.45
 
     def test_default_audio_length_should_be_reasonable(self) -> None:
         """
@@ -109,7 +110,7 @@ class TestAudioLDMGeneratorLatentShape:
         assert AudioLDMGenerator.LATENT_HEIGHT == expected_height
 
 
-@pytest.mark.skip(reason="AudioLDMGenerator not yet implemented")
+@pytest.mark.slow
 class TestAudioLDMGeneratorInit:
     """Tests for AudioLDMGenerator initialization."""
 
@@ -146,7 +147,7 @@ class TestAudioLDMGeneratorInit:
         assert generator.output_modality == "audio"
 
 
-@pytest.mark.skip(reason="AudioLDMGenerator not yet implemented")
+@pytest.mark.slow
 class TestAudioLDMInitLatent:
     """Tests for the init_latent method."""
 
@@ -187,7 +188,7 @@ class TestAudioLDMInitLatent:
         assert torch.allclose(latent_1, latent_2)
 
 
-@pytest.mark.skip(reason="AudioLDMGenerator not yet implemented")
+@pytest.mark.slow
 class TestAudioLDMDecode:
     """Tests for the decode method."""
 
@@ -224,7 +225,7 @@ class TestAudioLDMDecode:
         assert latent.grad is not None
 
 
-@pytest.mark.skip(reason="AudioLDMGenerator not yet implemented")
+@pytest.mark.slow
 class TestAudioLDMDecodeToMel:
     """Tests for the decode_to_mel method."""
 

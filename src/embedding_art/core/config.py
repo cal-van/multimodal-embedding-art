@@ -8,7 +8,6 @@ from typing import Any, Literal
 
 import yaml
 
-
 DEFAULT_CONFIG_FILENAME = "config.yaml"
 
 

@@ -28,6 +28,7 @@ from rich.text import Text
 
 from embedding_art.core.concept import Concept
 from embedding_art.core.config import OptimizationConfig
+from embedding_art.core.memory import MemoryConfig, MemoryManager
 from embedding_art.encoders.base import Encoder
 from embedding_art.generators.base import Generator
 from embedding_art.regularizers import CompositeRegularizer, Regularizer
@@ -203,6 +204,7 @@ class EmbeddingArtEngine:
         progress: bool | ProgressConfig = True,
         checkpoint_dir: Path | str | None = None,
         resume_from: Path | str | None = None,
+        memory_config: MemoryConfig | None = None,
     ) -> OptimizationResult:
         """
         Optimize a latent to maximize similarity with target concept.
@@ -216,12 +218,18 @@ class EmbeddingArtEngine:
             progress: Show progress bar. Can be bool or ProgressConfig for fine-grained control.
             checkpoint_dir: Directory to save checkpoints. If None, no checkpoints are saved to disk.
             resume_from: Path to a checkpoint file to resume from.
+            memory_config: Memory management configuration for optimization.
 
         Returns:
             OptimizationResult with final output and metadata
         """
         config = config or OptimizationConfig()
         generator = self.get_generator(output_modality)
+
+        # Setup memory manager
+        memory_manager: MemoryManager | None = None
+        if memory_config is not None:
+            memory_manager = MemoryManager(config=memory_config, device=str(self.device))
 
         progress_config = self._normalize_progress_config(progress)
 
@@ -295,6 +303,7 @@ class EmbeddingArtEngine:
                 start_time=start_time,
                 checkpoint_dir=checkpoint_path,
                 start_step=start_step,
+                memory_manager=memory_manager,
             )
         else:
             elapsed = self._run_simple_optimization(
@@ -314,6 +323,7 @@ class EmbeddingArtEngine:
                 start_time=start_time,
                 checkpoint_dir=checkpoint_path,
                 start_step=start_step,
+                memory_manager=memory_manager,
             )
 
         # Final encoding (without augmentation)
@@ -476,6 +486,7 @@ class EmbeddingArtEngine:
         start_time: float,
         checkpoint_dir: Path | None = None,
         start_step: int = 0,
+        memory_manager: MemoryManager | None = None,
     ) -> float:
         """Run optimization with simple progress bar."""
         progress_ctx = Progress(
@@ -508,6 +519,7 @@ class EmbeddingArtEngine:
                     checkpoints=checkpoints,
                     callback=callback,
                     checkpoint_dir=checkpoint_dir,
+                    memory_manager=memory_manager,
                 )
 
                 pbar.update(task, advance=1, description=f"sim={sim_val:.4f}")
@@ -532,6 +544,7 @@ class EmbeddingArtEngine:
         start_time: float,
         checkpoint_dir: Path | None = None,
         start_step: int = 0,
+        memory_manager: MemoryManager | None = None,
     ) -> float:
         """Run optimization with verbose Rich display."""
         console = Console()
@@ -603,6 +616,7 @@ class EmbeddingArtEngine:
                     checkpoints=checkpoints,
                     callback=callback,
                     checkpoint_dir=checkpoint_dir,
+                    memory_manager=memory_manager,
                 )
 
                 lr = None
@@ -636,13 +650,21 @@ class EmbeddingArtEngine:
         checkpoints: list[tuple[int, torch.Tensor]],
         callback: Callable[[int, float, float, torch.Tensor], None] | None,
         checkpoint_dir: Path | None = None,
+        memory_manager: MemoryManager | None = None,
     ) -> tuple[float, float]:
         """Execute a single optimization step."""
         optimizer.zero_grad()
 
-        decoded = generator.decode(latent)
-        augmented = self._augment(decoded, config)
-        current_embedding = self._encode_for_modality(augmented, output_modality)
+        # Use memory-efficient context if configured
+        if memory_manager is not None:
+            with memory_manager.memory_efficient():
+                decoded = generator.decode(latent)
+                augmented = self._augment(decoded, config)
+                current_embedding = self._encode_for_modality(augmented, output_modality)
+        else:
+            decoded = generator.decode(latent)
+            augmented = self._augment(decoded, config)
+            current_embedding = self._encode_for_modality(augmented, output_modality)
 
         similarity = F.cosine_similarity(current_embedding, target_embedding, dim=-1).mean()
         similarity_loss = -similarity
@@ -669,6 +691,10 @@ class EmbeddingArtEngine:
 
         if callback is not None:
             callback(step, loss_val, sim_val, latent)
+
+        # Clear cache at configured intervals
+        if memory_manager is not None and memory_manager.should_empty_cache(step):
+            memory_manager.empty_cache()
 
         return loss_val, sim_val
 

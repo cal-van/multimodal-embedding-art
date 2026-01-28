@@ -62,6 +62,13 @@ References:
 """
 
 import torch
+from diffusers.models import AutoencoderKLTemporalDecoder
+
+from embedding_art.exceptions import (
+    GeneratorError,
+    ModelLoadError,
+    OutOfMemoryError,
+)
 
 
 class SVDVideoGenerator:
@@ -125,18 +132,44 @@ class SVDVideoGenerator:
             The temporal decoder has different behavior than standard
             AutoencoderKL - it processes the frame dimension with 3D
             convolutions for temporal coherence.
-
-        Raises:
-            NotImplementedError: This is a stub implementation.
         """
-        raise NotImplementedError(
-            "SVDVideoGenerator is a research stub. "
-            "Full implementation requires:\n"
-            "  1. Loading AutoencoderKLTemporalDecoder from diffusers\n"
-            "  2. Implementing conditioning image encoding via CLIP\n"
-            "  3. Handling temporal dimension in latent operations\n"
-            "See module docstring for architecture details."
-        )
+        self._device = torch.device(device)
+        self._model_id = model_id
+        self._num_frames = num_frames
+        self._conditioning_image: torch.Tensor | None = None
+
+        try:
+            self.vae = AutoencoderKLTemporalDecoder.from_pretrained(
+                model_id,
+                subfolder="vae",
+                torch_dtype=torch.float32,
+            )
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="loading SVD VAE model",
+                    device=device,
+                    original_error=e,
+                ) from e
+            raise ModelLoadError(model_name=model_id, original_error=e) from e
+        except OSError as e:
+            raise ModelLoadError(model_name=model_id, original_error=e) from e
+
+        try:
+            self.vae.to(self._device)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="moving SVD VAE to device",
+                    device=device,
+                    original_error=e,
+                ) from e
+            raise
+
+        self.vae.eval()
+
+        for param in self.vae.parameters():
+            param.requires_grad = False
 
     @property
     def latent_shape(self) -> tuple[int, ...]:
@@ -150,7 +183,7 @@ class SVDVideoGenerator:
         return (
             1,
             self.LATENT_CHANNELS,
-            self.DEFAULT_NUM_FRAMES,
+            self._num_frames,
             self.LATENT_HEIGHT,
             self.LATENT_WIDTH,
         )
@@ -162,13 +195,8 @@ class SVDVideoGenerator:
 
     @property
     def device(self) -> torch.device:
-        """
-        Device the generator is on.
-
-        Raises:
-            NotImplementedError: Stub implementation.
-        """
-        raise NotImplementedError("Stub implementation")
+        """Device the generator is on."""
+        return self._device
 
     def init_latent(self, seed: int | None = None) -> torch.Tensor:
         """
@@ -187,16 +215,21 @@ class SVDVideoGenerator:
             For embedding optimization, the latent should be initialized
             with proper scaling. The SVD VAE expects latents scaled by
             SCALING_FACTOR (0.18215) before decoding.
-
-        Raises:
-            NotImplementedError: Stub implementation.
         """
-        raise NotImplementedError(
-            "init_latent not implemented. Implementation should:\n"
-            "  1. Create torch.randn with shape self.latent_shape\n"
-            "  2. Set requires_grad=True for optimization\n"
-            "  3. Optionally apply scaling factor"
+        if seed is not None:
+            generator = torch.Generator(device=self._device).manual_seed(seed)
+        else:
+            generator = None
+
+        latent = torch.randn(
+            self.latent_shape,
+            device=self._device,
+            dtype=torch.float32,
+            generator=generator,
         )
+
+        latent.requires_grad_(True)
+        return latent
 
     def decode(
         self,
@@ -225,17 +258,35 @@ class SVDVideoGenerator:
             2. Reshape for decoder if needed
             3. Pass through AutoencoderKLTemporalDecoder
             4. Normalize output to [0, 1]
-
-        Raises:
-            NotImplementedError: Stub implementation.
         """
-        raise NotImplementedError(
-            "decode not implemented. Implementation should:\n"
-            "  1. Scale latent by 1/SCALING_FACTOR\n"
-            "  2. Pass through AutoencoderKLTemporalDecoder.decode()\n"
-            "  3. Handle conditioning image if SVD model requires it\n"
-            "  4. Convert output from [-1, 1] to [0, 1] range"
-        )
+        try:
+            scaled_latent = latent / self.SCALING_FACTOR
+
+            # Latent shape: [B, C, F, H, W] -> need [B*F, C, H, W] for 2D VAE
+            batch_size, channels, num_frames, height, width = scaled_latent.shape
+            # Permute to [B, F, C, H, W] then flatten batch and frames
+            latent_permuted = scaled_latent.permute(0, 2, 1, 3, 4)
+            latent_flat = latent_permuted.reshape(batch_size * num_frames, channels, height, width)
+
+            # Decode through VAE (temporal decoder needs num_frames)
+            decoded_flat = self.vae.decode(latent_flat, num_frames=num_frames).sample
+
+            # Reshape back to video: [B*F, 3, H*8, W*8] -> [B, F, 3, H*8, W*8]
+            _, out_channels, out_height, out_width = decoded_flat.shape
+            decoded = decoded_flat.view(batch_size, num_frames, out_channels, out_height, out_width)
+
+            decoded = (decoded + 1) / 2
+            decoded = decoded.clamp(0, 1)
+
+            return decoded
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="decoding latent to video",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise GeneratorError(operation="VAE decode", original_error=e) from e
 
     def encode(self, video: torch.Tensor) -> torch.Tensor:
         """
@@ -257,17 +308,32 @@ class SVDVideoGenerator:
             2. Encode each frame through 2D encoder
             3. Stack into temporal dimension
             4. Apply SCALING_FACTOR
-
-        Raises:
-            NotImplementedError: Stub implementation.
         """
-        raise NotImplementedError(
-            "encode not implemented. Implementation should:\n"
-            "  1. Reshape to process frames individually [B*F, 3, H, W]\n"
-            "  2. Encode through VAE encoder (from SD 2.1)\n"
-            "  3. Reshape back to [B, 4, F, H//8, W//8]\n"
-            "  4. Apply SCALING_FACTOR"
-        )
+        try:
+            batch_size, num_frames, channels, height, width = video.shape
+
+            video_flat = video.view(batch_size * num_frames, channels, height, width)
+
+            video_normalized = video_flat * 2 - 1
+
+            with torch.no_grad():
+                latent_dist = self.vae.encode(video_normalized).latent_dist
+                latent_flat = latent_dist.sample()
+
+            latent = latent_flat.view(batch_size, num_frames, 4, height // 8, width // 8)
+            latent = latent.permute(0, 2, 1, 3, 4)
+
+            latent = latent * self.SCALING_FACTOR
+
+            return latent
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="encoding video to latent",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise GeneratorError(operation="VAE encode", original_error=e) from e
 
     def set_conditioning_image(self, image: torch.Tensor) -> None:
         """
@@ -280,18 +346,19 @@ class SVDVideoGenerator:
         Args:
             image: Conditioning image tensor [B, 3, 576, 1024] or PIL Image
 
+        Raises:
+            ValueError: If image dimensions are incorrect.
+
         Note:
             The conditioning image is encoded via CLIP ViT-H-14 and
             injected into the UNet via cross-attention during generation.
             For direct VAE-only generation, the conditioning mechanism
             differs from full pipeline usage.
-
-        Raises:
-            NotImplementedError: Stub implementation.
         """
-        raise NotImplementedError(
-            "set_conditioning_image not implemented. Implementation should:\n"
-            "  1. Validate image dimensions (576x1024)\n"
-            "  2. Encode image via CLIP image encoder\n"
-            "  3. Store embedding for use in decode()"
-        )
+        if image.shape[-2:] != (self.OUTPUT_HEIGHT, self.OUTPUT_WIDTH):
+            raise ValueError(
+                f"Conditioning image must be {self.OUTPUT_HEIGHT}x{self.OUTPUT_WIDTH}, "
+                f"got {image.shape[-2]}x{image.shape[-1]}"
+            )
+
+        self._conditioning_image = image

@@ -65,9 +65,7 @@ class Concept:
         """Create concept from audio file."""
         path = Path(audio)
         embedding = encoder.encode_audio(path, start=start, duration=duration)
-        return cls(
-            embedding=embedding, description=f"audio:{path.name}[{start}:{start+duration}]"
-        )
+        return cls(embedding=embedding, description=f"audio:{path.name}[{start}:{start+duration}]")
 
     @classmethod
     def from_video(

@@ -21,22 +21,22 @@ Latent Space
 Mel-Spectrogram Configuration
 -----------------------------
 - 64 mel-frequency bins (F=64)
-- 16 kHz sample rate for standard models (48 kHz variant exists)
+- 16 kHz sample rate for vocoder output (feature extractor uses 48kHz for input)
 - Mel spectrogram is 2D: [height=mel_bins, width=time_frames]
 - VAE input has 1 channel (single mel spectrogram)
 
 VAE Scale Factor
 ----------------
-- vae_scale_factor = 2^(len(block_out_channels) - 1) = 4 (typically)
+- vae_scale_factor = 4 (determined by pipeline)
 - This determines spatial downsampling from mel spectrogram to latent
-- With block_out_channels=(128, 256, 256, 512), scale_factor=8
+- With block_out_channels=(128, 256, 512), scale_factor=4
 
 Latent Shape
 ------------
 - Shape: [batch, channels=8, height, width]
 - Height = mel_bins / vae_scale_factor = 64 / 4 = 16
 - Width = time_frames / vae_scale_factor (varies with audio length)
-- For 10.24s audio at 16kHz with typical hop_size: width ~= 256 / 4 = 64
+- For 10.24s audio at 16kHz with hop_size=160: width = 256 / 4 = 64
 - Example latent shape for 10s audio: [1, 8, 16, 64]
 
 UNet Configuration
@@ -48,14 +48,14 @@ UNet Configuration
 Vocoder
 -------
 - SpeechT5HifiGan converts mel spectrograms to waveforms
-- upsample_rates determine temporal upsampling (e.g., [5, 4, 4, 2, 2])
-- vocoder_upsample_factor = product of upsample_rates (e.g., 5*4*4*2*2 = 320)
+- upsample_rates = [5, 4, 2, 2, 2] -> product = 160
+- Expects input shape [batch, time_frames, mel_bins]
+- Output sample rate: 16 kHz
 
 Latent Distribution
 -------------------
 - Latents are sampled from N(0, 1) Gaussian distribution
-- VAE applies scaling similar to Stable Diffusion
-- Scaling factor likely ~0.18215 (same as SD) for normalized latents
+- VAE applies scaling factor 0.4110932946205139 (different from SD's 0.18215)
 
 Memory Considerations
 ---------------------
@@ -72,6 +72,13 @@ References
 """
 
 import torch
+from diffusers import AudioLDM2Pipeline
+
+from embedding_art.exceptions import (
+    GeneratorError,
+    ModelLoadError,
+    OutOfMemoryError,
+)
 
 
 class AudioLDMGenerator:
@@ -106,6 +113,10 @@ class AudioLDMGenerator:
     - Compression ratio of 4 in both dimensions
     - 64 mel bins for frequency resolution
 
+    Vocoder (SpeechT5HifiGan) expects:
+    - Input shape [batch, time_frames, mel_bins=64]
+    - Note: This requires transposing VAE output from [B, 1, 64, T] to [B, T, 64]
+
     Attributes
     ----------
     LATENT_CHANNELS : int
@@ -119,7 +130,7 @@ class AudioLDMGenerator:
     VAE_SCALE_FACTOR : int
         Spatial downsampling factor from mel to latent (4).
     SCALING_FACTOR : float
-        Latent scaling factor for VAE (similar to SD).
+        Latent scaling factor for VAE (0.4110932946205139).
     DEFAULT_AUDIO_LENGTH : float
         Default audio length in seconds (10.24).
     """
@@ -132,12 +143,15 @@ class AudioLDMGenerator:
     MEL_CHANNELS = 64  # Number of mel-frequency bins
 
     # Audio configuration
-    SAMPLE_RATE = 16000  # Hz
+    SAMPLE_RATE = 16000  # Hz (vocoder output sample rate)
     DEFAULT_AUDIO_LENGTH = 10.24  # seconds
 
     # VAE configuration
     VAE_SCALE_FACTOR = 4  # Compression ratio
-    SCALING_FACTOR = 0.18215  # Same as Stable Diffusion VAE
+    SCALING_FACTOR = 0.4110932946205139  # AudioLDM2 VAE scaling factor
+
+    # Vocoder configuration
+    VOCODER_UPSAMPLE_FACTOR = 160  # 5 * 4 * 2 * 2 * 2
 
     # Derived constants
     # hop_size typically 160 for 16kHz (10ms hop)
@@ -175,13 +189,51 @@ class AudioLDMGenerator:
         time_frames = int(audio_length_in_s * self.SAMPLE_RATE / self.HOP_SIZE)
         self._latent_width = time_frames // self.VAE_SCALE_FACTOR
 
-        # TODO: Load VAE and vocoder from AudioLDM2Pipeline
-        # The VAE is an AutoencoderKL that operates on mel spectrograms
-        # The vocoder is SpeechT5HifiGan that converts mel -> waveform
-        raise NotImplementedError(
-            "AudioLDMGenerator initialization not yet implemented. "
-            "Requires loading VAE and vocoder from diffusers AudioLDM2Pipeline."
-        )
+        # Load full pipeline to extract VAE and vocoder
+        try:
+            pipeline = AudioLDM2Pipeline.from_pretrained(
+                model_id,
+                torch_dtype=torch.float32,
+            )
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="loading AudioLDM2 pipeline",
+                    device=device,
+                    original_error=e,
+                ) from e
+            raise ModelLoadError(model_name=model_id, original_error=e) from e
+        except OSError as e:
+            raise ModelLoadError(model_name=model_id, original_error=e) from e
+
+        # Extract and keep only VAE and vocoder (discard the rest to save memory)
+        self.vae = pipeline.vae
+        self.vocoder = pipeline.vocoder
+
+        # Move to device
+        try:
+            self.vae.to(self._device)
+            self.vocoder.to(self._device)
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="moving AudioLDM2 components to device",
+                    device=device,
+                    original_error=e,
+                ) from e
+            raise
+
+        # Set to eval mode and freeze parameters
+        self.vae.eval()
+        self.vocoder.eval()
+
+        for param in self.vae.parameters():
+            param.requires_grad = False
+        for param in self.vocoder.parameters():
+            param.requires_grad = False
+
+        # Clean up remaining pipeline components
+        del pipeline
 
     @property
     def latent_shape(self) -> tuple[int, ...]:
@@ -225,7 +277,20 @@ class AudioLDMGenerator:
         torch.Tensor
             Latent tensor of shape [1, 8, 16, W] with requires_grad=True.
         """
-        raise NotImplementedError("AudioLDMGenerator.init_latent not yet implemented.")
+        if seed is not None:
+            generator = torch.Generator(device=self._device).manual_seed(seed)
+        else:
+            generator = None
+
+        latent = torch.randn(
+            self.latent_shape,
+            device=self._device,
+            dtype=torch.float32,
+            generator=generator,
+        )
+
+        latent.requires_grad_(True)
+        return latent
 
     def decode(self, latent: torch.Tensor) -> torch.Tensor:
         """
@@ -247,34 +312,62 @@ class AudioLDMGenerator:
             Audio waveform tensor of shape [B, samples] where
             samples = audio_length_in_s * SAMPLE_RATE.
         """
-        raise NotImplementedError(
-            "AudioLDMGenerator.decode not yet implemented. "
-            "Requires VAE decode followed by vocoder."
-        )
+        try:
+            # First decode to mel spectrogram
+            mel = self.decode_to_mel(latent)
 
-    def encode(self, audio: torch.Tensor) -> torch.Tensor:
+            # Reshape for vocoder: [B, 1, mels, time] -> [B, time, mels]
+            mel_for_vocoder = mel.squeeze(1).transpose(1, 2)
+
+            # Convert mel to waveform via vocoder
+            waveform = self.vocoder(mel_for_vocoder)
+
+            return waveform
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="decoding latent to audio",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise GeneratorError(operation="audio decode", original_error=e) from e
+
+    def encode(self, mel: torch.Tensor) -> torch.Tensor:
         """
-        Encode audio waveform to latent (for round-trip testing).
+        Encode mel spectrogram to latent (for round-trip testing).
 
-        The encoding pipeline is:
-        1. Convert waveform to mel spectrogram
-        2. Encode mel spectrogram through VAE
-        3. Scale latent by SCALING_FACTOR
+        Note: This method encodes a mel spectrogram directly, not raw audio.
+        Converting raw audio to mel spectrogram requires additional preprocessing
+        that is outside the scope of this generator.
 
         Parameters
         ----------
-        audio : torch.Tensor
-            Audio waveform tensor of shape [B, samples].
+        mel : torch.Tensor
+            Mel spectrogram tensor of shape [B, 1, 64, T] where T is time frames.
 
         Returns
         -------
         torch.Tensor
-            Latent tensor of shape [B, 8, H, W].
+            Latent tensor of shape [B, 8, 16, T//4].
         """
-        raise NotImplementedError(
-            "AudioLDMGenerator.encode not yet implemented. "
-            "Requires mel spectrogram extraction followed by VAE encode."
-        )
+        try:
+            # Encode mel spectrogram through VAE
+            with torch.no_grad():
+                latent_dist = self.vae.encode(mel).latent_dist
+                latent = latent_dist.sample()
+
+            # Apply scaling factor
+            latent = latent * self.SCALING_FACTOR
+
+            return latent
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="encoding mel spectrogram to latent",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise GeneratorError(operation="VAE encode", original_error=e) from e
 
     def decode_to_mel(self, latent: torch.Tensor) -> torch.Tensor:
         """
@@ -292,4 +385,19 @@ class AudioLDMGenerator:
         torch.Tensor
             Mel spectrogram tensor of shape [B, 1, 64, W*4].
         """
-        raise NotImplementedError("AudioLDMGenerator.decode_to_mel not yet implemented.")
+        try:
+            # Scale latent (AudioLDM2 VAE expects scaled latents)
+            scaled_latent = latent / self.SCALING_FACTOR
+
+            # Decode through VAE to mel spectrogram
+            mel = self.vae.decode(scaled_latent).sample
+
+            return mel
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower():
+                raise OutOfMemoryError(
+                    operation="decoding latent to mel spectrogram",
+                    device=str(self._device),
+                    original_error=e,
+                ) from e
+            raise GeneratorError(operation="VAE decode to mel", original_error=e) from e
