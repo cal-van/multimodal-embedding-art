@@ -10,6 +10,7 @@ from enum import Enum
 import soundfile as sf
 import numpy as np
 import torch
+import traceback
 from diffusers.utils import export_to_video
 
 from embedding_art import EmbeddingArtEngine, OptimizationConfig
@@ -19,6 +20,7 @@ from embedding_art.generators.image import SDXLImageGenerator
 from embedding_art.generators.audio import AudioLDMGenerator
 from embedding_art.generators.video import SVDVideoGenerator
 from embedding_art.regularizers import CompositeRegularizer, TotalVariation, SpectralRegularizer, LatentNorm
+from embedding_art.web.sockets import manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -121,7 +123,6 @@ class JobManager:
 
     def _run_job_sync(self, job: Job, loop: asyncio.AbstractEventLoop) -> None:
         """Synchronous execution of the job."""
-        from embedding_art.web.sockets import manager
 
         def broadcast(msg: dict):
             # Fire and forget broadcast
@@ -245,7 +246,6 @@ class JobManager:
             broadcast({"type": "log", "message": f"Saved result to {job.result_path}"})
             
         except Exception as e:
-            import traceback
             tb = traceback.format_exc()
             logger.error(f"Job failed: {e}")
             job.status = JobStatus.FAILED

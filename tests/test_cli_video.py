@@ -10,25 +10,25 @@ from embedding_art.cli.main import cli
 @pytest.fixture
 def mock_engine_setup():
     with (
-        patch("embedding_art.EmbeddingArtEngine") as MockEngine,
-        patch("embedding_art.encoders.ImageBindEncoder") as MockEncoder,
-        patch("embedding_art.generators.SDXLImageGenerator") as MockImageGen,
-        patch("embedding_art.generators.AudioLDMGenerator") as MockAudioGen,
-        patch("embedding_art.generators.SVDVideoGenerator") as MockVideoGen,
+        patch("embedding_art.EmbeddingArtEngine") as mock_engine,
+        patch("embedding_art.encoders.ImageBindEncoder") as mock_encoder,
+        patch("embedding_art.generators.SDXLImageGenerator") as mock_image_gen,
+        patch("embedding_art.generators.AudioLDMGenerator") as mock_audio_gen,
+        patch("embedding_art.generators.SVDVideoGenerator") as mock_video_gen,
     ):
         mock_result = MagicMock()
         mock_result.final_similarity = 0.95
         mock_result.elapsed_seconds = 10.0
 
-        mock_engine_instance = MockEngine.return_value
+        mock_engine_instance = mock_engine.return_value
         mock_engine_instance.optimize.return_value = mock_result
 
         yield {
-            "engine_cls": MockEngine,
-            "encoder_cls": MockEncoder,
-            "image_gen_cls": MockImageGen,
-            "audio_gen_cls": MockAudioGen,
-            "video_gen_cls": MockVideoGen,
+            "engine_cls": mock_engine,
+            "encoder_cls": mock_encoder,
+            "image_gen_cls": mock_image_gen,
+            "audio_gen_cls": mock_audio_gen,
+            "video_gen_cls": mock_video_gen,
             "engine_instance": mock_engine_instance,
             "result": mock_result,
         }

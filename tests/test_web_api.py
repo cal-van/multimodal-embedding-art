@@ -1,6 +1,3 @@
-from fastapi.testclient import TestClient
-from embedding_art.web.app import app
-from embedding_art.web.services.job_manager import job_manager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -63,7 +60,7 @@ def test_list_jobs(client):
         "/jobs/",
         json={"target_text": ["list_test"]}
     )
-    
+
     response = client.get("/jobs/")
     assert response.status_code == 200
     data = response.json()

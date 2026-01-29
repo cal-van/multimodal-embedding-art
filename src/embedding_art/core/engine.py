@@ -13,6 +13,7 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from PIL import Image
 
 from embedding_art.core.concept import Concept
@@ -303,6 +304,11 @@ class EmbeddingArtEngine:
             elapsed_seconds=elapsed,
         )
 
+    # Constants
+    DEFAULT_CFG_SCALE = 7.5
+    DEFAULT_STEPS = 30
+    DEFAULT_DUMMY_LATENT_SHAPE = (1, 4, 64, 64)
+
     def _run_diffusion_generation(
         self,
         generator: Generator,
@@ -338,24 +344,23 @@ class EmbeddingArtEngine:
             prompt = "" 
             text_guidance_scale = 0.0 # Disable standard CFG
         else:
-            text_guidance_scale = 7.5 # Default SDXL CFG
+            text_guidance_scale = self.DEFAULT_CFG_SCALE
+            
+        params = {
+            "prompt": prompt,
+            "num_inference_steps": config.steps if config.steps > 0 else self.DEFAULT_STEPS,
+            "guidance_scale": text_guidance_scale,
+            "callback": generation_callback,
+            "imagebind_encoder": self.encoder,
+            "target_embedding": target.embedding.to(self.device),
+            "imagebind_guidance_scale": imagebind_scale,
+            "regularizers": regularizers,
+        }
 
         # Call generator
-        final_image = generator.generate(
-            prompt=prompt,
-            num_inference_steps=config.steps if config.steps > 0 else 30,
-            guidance_scale=text_guidance_scale,
-            callback=generation_callback,
-            imagebind_encoder=self.encoder,
-            target_embedding=target.embedding.to(self.device),
-            imagebind_guidance_scale=imagebind_scale,
-            regularizers=regularizers, 
-        )
+        final_image = generator.generate(**params)
         
         elapsed = time() - start_time
-        
-        # Create a result wrapper
-        import torchvision.transforms.functional as TF
         
         # Convert PIL to Tensor [1, 3, H, W]
         img_tensor = TF.to_tensor(final_image).unsqueeze(0).to(self.device) 
@@ -371,7 +376,7 @@ class EmbeddingArtEngine:
              latent_dist = generator.pipeline.vae.encode(img_normalized).latent_dist
              latent = latent_dist.sample() * generator.pipeline.vae.config.scaling_factor
         else:
-             latent = torch.zeros(1, 4, 64, 64) # Dummy
+             latent = torch.zeros(self.DEFAULT_DUMMY_LATENT_SHAPE) # Dummy
 
         return OptimizationResult(
             final_latent=latent,

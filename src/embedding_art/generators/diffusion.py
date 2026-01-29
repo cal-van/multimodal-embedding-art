@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import gc
 import logging
 from diffusers import StableDiffusionXLPipeline
@@ -6,6 +7,13 @@ import PIL.Image
 
 # Type checking imports
 from typing import TYPE_CHECKING, List, Optional, Union, Callable, Any
+
+# Conditional import to avoid runtime circular dependency if not needed immediately
+try:
+    from embedding_art.encoders.imagebind import ModalityType, ImageBindEncoder
+except ImportError:
+    ModalityType = Any # Fallback if ImageBind not available
+    ImageBindEncoder = Any
 
 if TYPE_CHECKING:
     from embedding_art.encoders.imagebind import ImageBindEncoder
@@ -22,9 +30,16 @@ DEFAULT_WIDTH = 1024
 DEFAULT_SEED_SCALE = 0.1
 DEFAULT_VAE_SCALING_FACTOR = 0.13025 # Standard SDXL VAE scaling factor usually, but access via config is better
 
+# Guidance Constants
+GUIDANCE_TIMESTEP_RATIO = 0.8
+GRADIENT_CLIP_MIN = -0.1
+GRADIENT_CLIP_MAX = 0.1
+GRADIENT_STEPS = 1
+GUIDANCE_IMAGE_SIZE = (224, 224)
+
 class SDXLDiffusionGenerator:
     def __init__(self, device: str = "cpu"):
-        self.device = device
+        self._device = torch.device(device) # Internal storage as torch.device
         logger.info(f"Loading SDXL Pipeline on {device}...")
         
         # Load SDXL
@@ -45,7 +60,7 @@ class SDXLDiffusionGenerator:
             torch_dtype=dtype, 
             variant=variant, 
             use_safetensors=True
-        ).to(device)
+        ).to(self.device) # Uses property
 
         # Optimize for Mac/M1
         if device == "mps":
@@ -53,6 +68,10 @@ class SDXLDiffusionGenerator:
             self.pipeline.enable_attention_slicing()
             self.pipeline.enable_vae_slicing()
             self.pipeline.enable_vae_tiling()
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
 
     def generate(
         self,
@@ -123,7 +142,8 @@ class SDXLDiffusionGenerator:
                 text_encoder_projection_dim = int(pooled_prompt_embeds.shape[-1])
             else:
                 text_encoder_projection_dim = self.pipeline.text_encoder_2.config.projection_dim
-
+            
+            # Ensure add_time_ids is on correct device
             add_time_ids = self.pipeline._get_add_time_ids(
                 original_size, (0, 0), target_size, dtype=prompt_embeds.dtype, text_encoder_projection_dim=text_encoder_projection_dim
             ).to(self.device)
@@ -164,15 +184,12 @@ class SDXLDiffusionGenerator:
                     # Determine when to guide. Early steps define structure, later steps define texture.
                     # Assessing similarity effectively requires some structure.
                     # Let's guide for the first 80% of steps.
-                    should_guide = imagebind_guidance_scale > 0 and i < (num_inference_steps * 0.8)
+                    should_guide = imagebind_guidance_scale > 0 and i < (num_inference_steps * GUIDANCE_TIMESTEP_RATIO)
                     
                     loss_val = 0.0
                     sim_val = 0.0
                     
                     if should_guide:
-                         # Single step gradient descent for speed
-                         GRADIENT_STEPS = 1
-                         
                          for k in range(GRADIENT_STEPS):
                              # 1. Enable gradients
                              latents = latents.detach().requires_grad_(True)
@@ -184,12 +201,10 @@ class SDXLDiffusionGenerator:
                              
                              # 3. ImageBind Encode
                              # ImageBind expects [1, 3, 224, 224] for vision
-                             import torch.nn.functional as F
                              # Resize to 224x224
-                             image_224 = F.interpolate(image, size=(224, 224), mode='bicubic', align_corners=False)
+                             image_224 = F.interpolate(image, size=GUIDANCE_IMAGE_SIZE, mode='bicubic', align_corners=False)
                              
                              # 4. Calculate Loss
-                             from embedding_art.encoders.imagebind import ModalityType
                              embeds = imagebind_encoder.model({ModalityType.VISION: image_224})[ModalityType.VISION]
                              current_embedding = F.normalize(embeds, dim=-1)
                              
@@ -209,7 +224,7 @@ class SDXLDiffusionGenerator:
                              # Remove Normalization (it killed dynamics/focus)
                              # Use Clipping instead to prevent "Deep Fried" explosions
                              # Clip gradients to a safe range
-                             grad = torch.clamp(grad, -0.1, 0.1)
+                             grad = torch.clamp(grad, GRADIENT_CLIP_MIN, GRADIENT_CLIP_MAX)
                              
                              # 6. Update Latent
                              # Use guidance_scale as magnitude multiplier
@@ -231,7 +246,7 @@ class SDXLDiffusionGenerator:
                     
                     # Cleanup to save memory
                     gc.collect()
-                    if self.device == "mps":
+                    if str(self.device).startswith("mps"):
                         torch.mps.empty_cache()
 
             # Final decode
@@ -243,7 +258,7 @@ class SDXLDiffusionGenerator:
             # Cleanup final
             del latents, prompt_embeds, negative_prompt_embeds, add_text_embeds, add_time_ids
             gc.collect()
-            if self.device == "mps":
+            if str(self.device).startswith("mps"):
                 torch.mps.empty_cache()
                 
             return image_pil
@@ -301,4 +316,3 @@ class SDXLDiffusionGenerator:
             image = self.pipeline.vae.decode(latent).sample
 
         return image # [B, 3, H, W]
-

@@ -10,10 +10,10 @@ from embedding_art.cli.main import cli
 def mock_engine_setup():
     # Patch what main.py imports: "from embedding_art import EmbeddingArtEngine"
     with (
-        patch("embedding_art.EmbeddingArtEngine") as MockEngine,
-        patch("embedding_art.encoders.ImageBindEncoder") as MockEncoder,
-        patch("embedding_art.generators.SDXLImageGenerator") as MockImageGen,
-        patch("embedding_art.generators.AudioLDMGenerator") as MockAudioGen,
+        patch("embedding_art.EmbeddingArtEngine") as mock_engine,
+        patch("embedding_art.encoders.ImageBindEncoder") as mock_encoder,
+        patch("embedding_art.generators.SDXLImageGenerator") as mock_image_gen,
+        patch("embedding_art.generators.AudioLDMGenerator") as mock_audio_gen,
     ):
         # Setup mock result
         mock_result = MagicMock()
@@ -21,14 +21,14 @@ def mock_engine_setup():
         mock_result.elapsed_seconds = 10.0
 
         # Setup mock engine instance
-        mock_engine_instance = MockEngine.return_value
+        mock_engine_instance = mock_engine.return_value
         mock_engine_instance.optimize.return_value = mock_result
 
         yield {
-            "engine_cls": MockEngine,
-            "encoder_cls": MockEncoder,
-            "image_gen_cls": MockImageGen,
-            "audio_gen_cls": MockAudioGen,
+            "engine_cls": mock_engine,
+            "encoder_cls": mock_encoder,
+            "image_gen_cls": mock_image_gen,
+            "audio_gen_cls": mock_audio_gen,
             "engine_instance": mock_engine_instance,
             "result": mock_result,
         }
