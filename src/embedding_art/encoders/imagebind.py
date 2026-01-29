@@ -21,13 +21,20 @@ from embedding_art.exceptions import (
 )
 
 # ImageBind imports - will fail if not installed
+import logging
+logger = logging.getLogger(__name__)
+
 try:
     from imagebind import data as imagebind_data
     from imagebind.models import imagebind_model
     from imagebind.models.imagebind_model import ModalityType
 
     IMAGEBIND_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    logger.warning(f"ImageBind import failed: {e}")
+    # Don't print traceback unless debug logging is enabled
+    logger.debug("ImageBind import failure traceback:", exc_info=True)
+    
     IMAGEBIND_AVAILABLE = False
     imagebind_data = None
     imagebind_model = None
@@ -124,11 +131,24 @@ class ImageBindEncoder:
 
             if isinstance(image, Image.Image):
                 # Save to temp file for ImageBind's loader
+                import os
                 import tempfile
 
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
                     image.save(f.name)
                     image_path = f.name
+                # Schedule cleanup after we're done with the file
+                try:
+                    inputs = {
+                        ModalityType.VISION: imagebind_data.load_and_transform_vision_data(
+                            [image_path], self._device
+                        )
+                    }
+                    with torch.no_grad():
+                        embeddings = self.model(inputs)
+                    return F.normalize(embeddings[ModalityType.VISION], dim=-1)
+                finally:
+                    os.unlink(image_path)
             else:
                 image_path = str(image)
 

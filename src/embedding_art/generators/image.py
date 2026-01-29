@@ -83,12 +83,17 @@ class SDXLImageGenerator:
     def device(self) -> torch.device:
         return self._device
 
-    def init_latent(self, seed: int | None = None) -> torch.Tensor:
+    def init_latent(self, seed: int | None = None, scale: float = 0.1) -> torch.Tensor:
         """
         Initialize a random latent for optimization.
 
-        Returns a tensor with requires_grad=True, sampled from N(0, 1)
-        which is the typical latent distribution for VAEs.
+        Args:
+            seed: Random seed
+            scale: Standard deviation of noise. Default 0.1 to avoid VAE saturation.
+                  (Since we divide by 0.13025, a scale of 0.1 result in ~unit variance inputs)
+        
+        Returns:
+            Tensor with requires_grad=True
         """
         if seed is not None:
             generator = torch.Generator(device=self._device).manual_seed(seed)
@@ -100,7 +105,7 @@ class SDXLImageGenerator:
             device=self._device,
             dtype=torch.float32,
             generator=generator,
-        )
+        ) * scale
 
         latent.requires_grad_(True)
         return latent

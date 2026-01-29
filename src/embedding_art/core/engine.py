@@ -161,7 +161,18 @@ class EmbeddingArtEngine:
         config = config or OptimizationConfig()
         generator = self.get_generator(output_modality)
 
-        # Setup memory manager
+        # Check if generator supports direct generation (Diffusion Pipelines)
+        if hasattr(generator, "generate"):
+             return self._run_diffusion_generation(
+                 generator=generator,
+                 target=target,
+                 output_modality=output_modality,
+                 config=config,
+                 regularizers=regularizers,
+                 callback=callback
+             )
+
+        # Setup optimization components
         memory_manager: MemoryManager | None = None
         if memory_config is not None:
             memory_manager = MemoryManager(config=memory_config, device=str(self.device))
@@ -292,6 +303,87 @@ class EmbeddingArtEngine:
             elapsed_seconds=elapsed,
         )
 
+    def _run_diffusion_generation(
+        self,
+        generator: Generator,
+        target: Concept,
+        output_modality: str,
+        config: OptimizationConfig,
+        regularizers: Any,
+        callback: Callable | None
+    ) -> OptimizationResult:
+        """Run generation using a diffusion pipeline (SDXL, AudioLDM, SVD)."""
+        prompt = target.text_source or target.description 
+        if target.text_source is None:
+            # If no text source (e.g. audio concept), use description
+            prompt = target.description
+        
+        # Start tracking
+        loss_history: list[float] = []
+        similarity_history: list[float] = []
+        start_time = time()
+        
+        # Helper for callback adaptation
+        def generation_callback(step: int, loss: float, sim: float, latent: torch.Tensor | None):
+            if callback:
+                # Provide empty tensor if latent is None to match signature
+                callback(step, loss, sim, latent if latent is not None else torch.tensor([]))
+        
+        # Check ImageBind configuration
+        imagebind_scale = getattr(config, "guidance_scale", 0.0)
+        
+        # If ImageBind guidance is active, we want PURE concept visualization.
+        # We disable the Text Prompt (human bias) and Text CFG to let ImageBind drive.
+        if imagebind_scale > 0:
+            prompt = "" 
+            text_guidance_scale = 0.0 # Disable standard CFG
+        else:
+            text_guidance_scale = 7.5 # Default SDXL CFG
+
+        # Call generator
+        final_image = generator.generate(
+            prompt=prompt,
+            num_inference_steps=config.steps if config.steps > 0 else 30,
+            guidance_scale=text_guidance_scale,
+            callback=generation_callback,
+            imagebind_encoder=self.encoder,
+            target_embedding=target.embedding.to(self.device),
+            imagebind_guidance_scale=imagebind_scale,
+            regularizers=regularizers, 
+        )
+        
+        elapsed = time() - start_time
+        
+        # Create a result wrapper
+        import torchvision.transforms.functional as TF
+        
+        # Convert PIL to Tensor [1, 3, H, W]
+        img_tensor = TF.to_tensor(final_image).unsqueeze(0).to(self.device) 
+        
+        with torch.no_grad():
+            final_embedding = self._encode_for_modality(img_tensor, output_modality)
+            final_similarity = F.cosine_similarity(final_embedding, target.embedding.to(self.device), dim=-1).mean().item()
+
+        # VAE Encode result to get a valid latent if possible
+        if hasattr(generator, "pipeline") and hasattr(generator.pipeline, "vae"):
+             # Scale to [-1, 1] for VAE
+             img_normalized = img_tensor * 2.0 - 1.0
+             latent_dist = generator.pipeline.vae.encode(img_normalized).latent_dist
+             latent = latent_dist.sample() * generator.pipeline.vae.config.scaling_factor
+        else:
+             latent = torch.zeros(1, 4, 64, 64) # Dummy
+
+        return OptimizationResult(
+            final_latent=latent,
+            final_embedding=final_embedding.detach(),
+            target_embedding=target.embedding.detach(),
+            final_similarity=final_similarity,
+            loss_history=loss_history,
+            similarity_history=similarity_history,
+            elapsed_seconds=elapsed,
+            config=config,
+        )
+
     def _encode_for_modality(
         self,
         output: torch.Tensor,
@@ -323,8 +415,8 @@ class EmbeddingArtEngine:
             return decoded
 
         # Audio or other non-spatial modalities shouldn't be augmented with spatial ops
-        # ImageBind audio input is [B, T], images are [B, C, H, W]
-        if decoded.ndim != 4:
+        # ImageBind audio input is [B, T], images are [B, C, H, W], video is [B, F, C, H, W]
+        if decoded.ndim not in (4, 5):
             return decoded
 
         augmented = decoded

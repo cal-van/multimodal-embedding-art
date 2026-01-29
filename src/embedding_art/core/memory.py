@@ -63,7 +63,6 @@ class MemoryManager:
         self._config = config
         self._device = torch.device(device)
         self._device_type = self._get_device_type()
-        self._device_type = self._get_device_type()
         self._snapshots: list[dict[str, Any]] = []
 
     def check_memory_limit(self) -> None:

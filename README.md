@@ -114,6 +114,16 @@ embed-art upscale input.png --scale 4 --output upscaled.png
 
 # Batch processing
 embed-art batch run batch_config.yaml
+
+# Web UI
+# Start Backend (Port 8000)
+embed-art web --port 8000 --reload
+
+# Start Frontend (Port 5173 -> 8000)
+# (In a separate terminal)
+cd ui
+npm install
+npm run dev
 ```
 
 ## Configuration
@@ -162,7 +172,7 @@ embedding-art/
 - [x] Video output via SVD
 - [x] Resolution upscaling
 - [x] Batch processing
-- [ ] Web UI
+- [x] Web UI (Alpha)
 
 ## License
 

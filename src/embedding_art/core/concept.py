@@ -34,6 +34,7 @@ class Concept:
 
     embedding: torch.Tensor  # Shape: [1, embed_dim], normalized
     description: str = ""
+    text_source: str | None = None # Original text if created from text
 
     def __post_init__(self):
         """Ensure embedding is normalized."""
@@ -45,7 +46,7 @@ class Concept:
     def from_text(cls, text: str, encoder: Encoder) -> Concept:
         """Create concept from text description."""
         embedding = encoder.encode_text(text)
-        return cls(embedding=embedding, description=f'text:"{text}"')
+        return cls(embedding=embedding, description=f'text:"{text}"', text_source=text)
 
     @classmethod
     def from_image(cls, image: Path | str, encoder: Encoder) -> Concept:
@@ -114,6 +115,7 @@ class Concept:
         return Concept(
             embedding=self.embedding.to(device),
             description=self.description,
+            text_source=self.text_source,
         )
 
     # === Arithmetic operations ===

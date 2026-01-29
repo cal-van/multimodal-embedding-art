@@ -70,6 +70,9 @@ class OptimizationConfig:
     # Reproducibility
     seed: int | None = None
 
+    # Guidance
+    guidance_scale: float = 0.0 # ImageBind guidance scale
+
     def __post_init__(self):
         if isinstance(self.augmentation, dict):
             self.augmentation = AugmentationConfig(**self.augmentation)

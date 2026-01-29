@@ -63,3 +63,6 @@ htmlcov/
 # Beads
 .beads/beads.db
 .beads/*.log
+
+# External Dependencies
+ImageBind/

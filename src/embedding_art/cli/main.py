@@ -18,6 +18,7 @@ from embedding_art.cli.commands.embed import embed, compare
 from embedding_art.cli.commands.batch import batch
 from embedding_art.cli.commands.upscale import upscale
 from embedding_art.cli.commands.visualize import visualize
+from embedding_art.cli.commands.web import web
 
 
 @click.group()
@@ -59,6 +60,7 @@ cli.add_command(compare)
 cli.add_command(batch)
 cli.add_command(upscale)
 cli.add_command(visualize)
+cli.add_command(web)
 
 
 if __name__ == "__main__":
