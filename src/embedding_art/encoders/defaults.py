@@ -18,11 +18,18 @@ def create_default_registry() -> EncoderRegistry:
     except ImportError:
         pass
 
-    # Future encoders registered here as they're implemented:
-    # try:
-    #     from embedding_art.encoders.siglip2 import SigLIP2Encoder
-    #     registry.register("siglip2-so400m", SigLIP2Encoder)
-    # except ImportError:
-    #     pass
+    try:
+        from embedding_art.encoders.siglip2 import SigLIP2Encoder
+
+        registry.register("siglip2-so400m", SigLIP2Encoder)
+    except ImportError:
+        pass
+
+    try:
+        from embedding_art.encoders.clap import CLAPEncoder
+
+        registry.register("clap-general", CLAPEncoder)
+    except ImportError:
+        pass
 
     return registry
