@@ -292,23 +292,23 @@ class ImageBindEncoder:
     # v2 duck-typed interface
     # ------------------------------------------------------------------
 
-    @property
-    def card(self) -> EncoderCard:
-        """Return an EncoderCard describing ImageBind's capabilities."""
-        return EncoderCard(
-            name="imagebind",
-            capabilities=(
-                EncoderCapability.TEXT
-                | EncoderCapability.IMAGE
-                | EncoderCapability.AUDIO
-                | EncoderCapability.VIDEO
-                | EncoderCapability.DEPTH
-                | EncoderCapability.BACKPROP_OPTIMIZABLE
-            ),
-            embedding_dim=self.embedding_dim,
-            memory_estimate_mb=3000,
-            backprop_cost=1.0,
-        )
+    # Class-level card so that the registry can read it via cls.card before
+    # instantiation (e.g. in list_available()).  A property would only work on
+    # an instance, causing AttributeError when accessed on the class itself.
+    card: EncoderCard = EncoderCard(
+        name="imagebind",
+        capabilities=(
+            EncoderCapability.TEXT
+            | EncoderCapability.IMAGE
+            | EncoderCapability.AUDIO
+            | EncoderCapability.VIDEO
+            | EncoderCapability.DEPTH
+            | EncoderCapability.BACKPROP_OPTIMIZABLE
+        ),
+        embedding_dim=1024,
+        memory_estimate_mb=3000,
+        backprop_cost=1.0,
+    )
 
     def encode(self, spec: ConceptSpec) -> Concept:
         """Dispatch a ConceptSpec to the appropriate encode_* method.
@@ -329,7 +329,19 @@ class ImageBindEncoder:
             return Concept(embedding=embedding, description=f'text:"{spec.text}"')
         if spec.image is not None:
             embedding = self.encode_image(spec.image)
-            return Concept(embedding=embedding, description=f"image:{spec.image.name}")
+            # Load the image as a tensor for source_input so downstream callers
+            # (e.g. feature-matching loss) have access to the raw pixel data.
+            try:
+                pil_img = Image.open(spec.image).convert("RGB")
+                import torchvision.transforms.functional as TF
+                source_tensor = TF.to_tensor(pil_img).unsqueeze(0)  # [1, 3, H, W]
+            except Exception:
+                source_tensor = None
+            return Concept(
+                embedding=embedding,
+                description=f"image:{spec.image.name}",
+                source_input=source_tensor,
+            )
         if spec.audio is not None:
             embedding = self.encode_audio(spec.audio)
             return Concept(embedding=embedding, description=f"audio:{spec.audio.name}")

@@ -49,54 +49,30 @@ def decompose(
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
 
     try:
-        import torch
         from embedding_art.core.concept import Concept
         from embedding_art.encoders.defaults import create_default_registry
+        from embedding_art.sae.lens import SAELens
 
         device = loaded_config.get("device", "mps")
 
         registry = create_default_registry()
         encoder_instance = registry.load(encoder, device=device)
 
+        sae = SAELens(encoder_name=encoder, artifact_path=Path(sae_path))
         concept = Concept.from_text(target_text, encoder_instance)
-        embedding = concept.embedding  # shape: [1024]
+        decomp = concept.decompose(sae)
 
-        # Load SAE and decompose
-        sae = torch.load(sae_path, map_location="cpu")
-
-        # SAE inference: compute feature activations
-        # Supports dicts with 'encoder_weight'/'encoder_bias' keys or objects with an encode() method.
-        if hasattr(sae, "encode"):
-            activations = sae.encode(embedding.unsqueeze(0)).squeeze(0)
-        elif isinstance(sae, dict):
-            weight = sae["encoder_weight"]  # [n_features, dim]
-            bias = sae.get("encoder_bias", torch.zeros(weight.shape[0]))
-            pre_act = embedding @ weight.T + bias
-            activations = torch.relu(pre_act)
-        else:
-            raise click.UsageError(
-                f"Unrecognised SAE format: {type(sae)}. "
-                "Expected an object with encode() or a state-dict with 'encoder_weight'."
-            )
-
-        # Retrieve feature names if available
-        feature_names = getattr(sae, "feature_names", None)
-        if isinstance(sae, dict):
-            feature_names = sae.get("feature_names", None)
-
-        # Select top-N by activation magnitude
-        values, indices = activations.topk(min(top, activations.numel()))
+        # Sort active features by activation strength descending, take top N
+        sorted_features = sorted(
+            decomp.active_features.items(), key=lambda kv: kv[1], reverse=True
+        )[:top]
 
         table = Table(title=f'Top {top} SAE features for "{target_text}"', show_header=True)
         table.add_column("Rank", style="dim", width=6)
         table.add_column("Feature", style="bold cyan")
         table.add_column("Activation", style="green")
 
-        for rank, (idx, val) in enumerate(zip(indices.tolist(), values.tolist()), start=1):
-            if feature_names is not None and idx < len(feature_names):
-                name = feature_names[idx]
-            else:
-                name = f"feature_{idx}"
+        for rank, (name, val) in enumerate(sorted_features, start=1):
             table.add_row(str(rank), name, f"{val:.4f}")
 
         console.print(table)

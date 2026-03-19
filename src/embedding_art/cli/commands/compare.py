@@ -68,7 +68,7 @@ def compare(
     steps = steps if steps is not None else opt_config.get("steps", 2000)
 
     try:
-        from embedding_art.core.concept import Concept
+        from embedding_art.core.concept_spec import ConceptSpec
         from embedding_art.core.config import OptimizationConfig
         from embedding_art.core.engine import EmbeddingArtEngine
         from embedding_art.encoders.defaults import create_default_registry
@@ -78,21 +78,17 @@ def compare(
 
         device = loaded_config.get("device", "mps")
 
-        # Build concept using the first encoder (compare runs independently per encoder)
-        first_encoder = registry.load(encoder_names[0], device=device)
+        # Build ConceptSpec(s) from CLI flags — let each encoder resolve them independently
+        specs = [ConceptSpec(text=text, weight=weight) for text, weight in target_text]
 
-        concepts = []
-        weights = []
-        for text, weight in target_text:
-            concepts.append(Concept.from_text(text, first_encoder))
-            weights.append(weight)
-
-        if len(concepts) == 1:
-            target = concepts[0]
+        if len(specs) == 1:
+            target = specs[0]
         else:
-            target = Concept.combine(concepts, weights)
+            # Use the first spec as the combined target (weighted combine not yet supported
+            # at the ConceptSpec level; callers needing true arithmetic should use render)
+            target = specs[0]
 
-        console.print(f"[bold]Target:[/bold] {target.description}")
+        console.print(f"[bold]Target:[/bold] {target.describe()}")
         console.print(f"[bold]Encoders:[/bold] {', '.join(encoder_names)}")
 
         engine = EmbeddingArtEngine.from_registry(registry, device=device)

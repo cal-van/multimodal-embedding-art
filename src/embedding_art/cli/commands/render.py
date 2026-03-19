@@ -113,7 +113,7 @@ def render(
     try:
         from embedding_art.core.concept import Concept
         from embedding_art.core.concept_spec import ConceptSpec
-        from embedding_art.core.config import OptimizationConfig
+        from embedding_art.core.config import LossConfig, OptimizationConfig
         from embedding_art.core.engine import EmbeddingArtEngine
         from embedding_art.encoders.defaults import create_default_registry
         from embedding_art.generators import SDXLImageGenerator, AudioLDMGenerator, SVDVideoGenerator
@@ -157,11 +157,16 @@ def render(
 
         engine.register_generator(output, generator)
 
-        # Build config
+        # Build config — wire the loss weights from CLI flags through LossConfig
+        loss_config = LossConfig(
+            similarity_weight=similarity_weight,
+            feature_matching_weight=feature_matching_weight,
+        )
         config = OptimizationConfig(
             steps=steps,
             learning_rate=lr,
             seed=seed,
+            loss=loss_config,
         )
 
         console.print(f"[bold]Rendering for {steps} steps...[/bold]")

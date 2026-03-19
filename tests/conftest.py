@@ -169,7 +169,14 @@ class MockEncoder:
             return Concept(embedding=embedding, description=f'text:"{spec.text}"')
         if spec.image is not None:
             embedding = self.encode_image(spec.image)
-            return Concept(embedding=embedding, description=f"image:{spec.image.name}")
+            # Provide a dummy source_input tensor so tests can exercise code paths
+            # that rely on Concept.source_input being populated for image specs.
+            source_tensor = torch.zeros(1, 3, 224, 224)
+            return Concept(
+                embedding=embedding,
+                description=f"image:{spec.image.name}",
+                source_input=source_tensor,
+            )
         if spec.audio is not None:
             embedding = self.encode_audio(spec.audio)
             return Concept(embedding=embedding, description=f"audio:{spec.audio.name}")

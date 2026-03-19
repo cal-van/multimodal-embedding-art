@@ -55,8 +55,8 @@ def collect(ctx: click.Context, encoder, dataset_path, output_path, max_samples)
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
 
     try:
-        import torch
         from embedding_art.encoders.defaults import create_default_registry
+        from embedding_art.sae.training import collect_embeddings
 
         device = loaded_config.get("device", "mps")
         dataset_path = Path(dataset_path)
@@ -67,36 +67,13 @@ def collect(ctx: click.Context, encoder, dataset_path, output_path, max_samples)
 
         console.print(f"[bold]Collecting embeddings from {dataset_path}...[/bold]")
 
-        # Discover image files
-        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-        if dataset_path.is_dir():
-            files = sorted(
-                p for p in dataset_path.rglob("*") if p.suffix.lower() in image_extensions
-            )
-        else:
-            # Treat as a text manifest — one path per line
-            files = [
-                Path(line.strip())
-                for line in dataset_path.read_text().splitlines()
-                if line.strip()
-            ]
-
-        files = files[:max_samples]
-        console.print(f"Found {len(files)} samples (limit: {max_samples})")
-
-        embeddings = []
-        from embedding_art.core.concept import Concept
-
-        for i, path in enumerate(files, start=1):
-            concept = Concept.from_image(str(path), encoder_instance)
-            embeddings.append(concept.embedding.cpu())
-            if i % 100 == 0 or i == len(files):
-                console.print(f"  [{i}/{len(files)}]")
-
-        stacked = torch.stack(embeddings)  # [N, dim]
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(stacked, output_path)
-        console.print(f"[bold green]Saved {stacked.shape[0]} embeddings to {output_path}[/bold green]")
+        saved_path = collect_embeddings(
+            encoder=encoder_instance,
+            dataset_path=dataset_path,
+            output_path=output_path,
+            max_samples=max_samples,
+        )
+        console.print(f"[bold green]Embeddings saved to {saved_path}[/bold green]")
 
     except Exception as e:
         handle_exception(e, debug_mode)
@@ -152,60 +129,33 @@ def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, 
 
     try:
         import torch
-        import torch.nn as nn
-        import torch.optim as optim
+        from embedding_art.sae.training import train_sae
 
         embeddings_path = Path(embeddings_path)
         output_path = Path(output_path)
 
-        data = torch.load(embeddings_path, map_location="cpu")  # [N, dim]
-        n_samples, embed_dim = data.shape
+        # Peek at the embeddings file to get embed_dim for the training call.
+        data = torch.load(embeddings_path, map_location="cpu", weights_only=True)
+        if isinstance(data, dict):
+            embed_dim = data["embeddings"].shape[1]
+            n_samples = data["embeddings"].shape[0]
+        else:
+            embed_dim = data.shape[1]
+            n_samples = data.shape[0]
 
         console.print(
             f"[bold]Training SAE: {embed_dim}d → {features} features "
             f"(λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
         )
 
-        # Simple tied-weight SAE with L1 regularisation
-        class SparseAutoencoder(nn.Module):
-            feature_names: list[str] | None = None
-
-            def __init__(self, dim: int, n_features: int) -> None:
-                super().__init__()
-                self.encoder = nn.Linear(dim, n_features)
-                self.decoder = nn.Linear(n_features, dim, bias=False)
-
-            def encode(self, x: torch.Tensor) -> torch.Tensor:
-                return torch.relu(self.encoder(x))
-
-            def forward(self, x: torch.Tensor):
-                acts = self.encode(x)
-                recon = self.decoder(acts)
-                return recon, acts
-
-        model = SparseAutoencoder(embed_dim, features)
-        optimizer = optim.Adam(model.parameters(), lr=1e-3)
-
-        dataset = torch.utils.data.TensorDataset(data)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=256, shuffle=True)
-
-        n_epochs = 10
-        for epoch in range(1, n_epochs + 1):
-            total_loss = 0.0
-            for (batch,) in loader:
-                recon, acts = model(batch)
-                recon_loss = nn.functional.mse_loss(recon, batch)
-                sparsity_loss = lambda_ * acts.abs().mean()
-                loss = recon_loss + sparsity_loss
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
-            avg = total_loss / len(loader)
-            console.print(f"  Epoch {epoch}/{n_epochs}  loss={avg:.6f}")
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(model, output_path)
+        train_sae(
+            embeddings_path=embeddings_path,
+            output_path=output_path,
+            embed_dim=embed_dim,
+            n_features=features,
+            k=sparsity,
+            lambda_gs=lambda_,
+        )
         console.print(f"[bold green]SAE saved to {output_path}[/bold green]")
 
     except Exception as e:

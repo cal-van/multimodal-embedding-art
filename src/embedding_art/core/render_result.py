@@ -60,6 +60,3 @@ class RenderResult:
     config: OptimizationConfig | None = None
     checkpoints: list[Path] | None = None
 
-
-# Backward compatibility alias — callers using the old name continue to work.
-OptimizationResult = RenderResult
