@@ -135,3 +135,120 @@ class UpscalerError(EmbeddingArtError):
             "  - Check that Real-ESRGAN is installed: pip install py-real-esrgan"
         )
         super().__init__(message)
+
+
+class EncoderNotFoundError(EmbeddingArtError):
+    """Raised when a requested encoder name is not in the registry."""
+
+    def __init__(self, name: str, available: list[str]) -> None:
+        self.name = name
+        self.available = available
+
+        if available:
+            available_str = "\n".join(f"  - {enc}" for enc in available)
+            suggestion = f"Available encoders:\n{available_str}"
+        else:
+            suggestion = "No encoders are currently registered. Check your installation."
+
+        message = (
+            f"Encoder '{name}' not found.\n\n"
+            f"{suggestion}\n\n"
+            "Suggestions:\n"
+            "  - Check the encoder name for typos\n"
+            "  - Ensure the encoder is installed and registered before use"
+        )
+        super().__init__(message)
+
+
+class EncoderCapabilityError(EmbeddingArtError):
+    """Raised when an operation requires a capability the encoder does not support."""
+
+    def __init__(self, encoder_name: str, capability: str) -> None:
+        self.encoder_name = encoder_name
+        self.capability = capability
+
+        message = (
+            f"Encoder '{encoder_name}' does not support capability '{capability}'.\n\n"
+            "Suggestions:\n"
+            "  - Use an encoder that supports this capability\n"
+            "  - Check the encoder's documentation for supported modalities\n"
+            "  - ImageBind supports text, image, audio, video, depth, and thermal inputs"
+        )
+        super().__init__(message)
+
+
+class SAENotTrainedError(EmbeddingArtError):
+    """Raised when SAE features are requested but no trained SAE artifact exists."""
+
+    def __init__(self, encoder_name: str) -> None:
+        self.encoder_name = encoder_name
+
+        message = (
+            f"No trained SAE artifact found for encoder '{encoder_name}'.\n\n"
+            "Sparse autoencoder (SAE) features require a pre-trained artifact.\n\n"
+            "Suggestions:\n"
+            "  - Train an SAE on this encoder first: embed-art train-sae --encoder "
+            f"{encoder_name}\n"
+            "  - Download a pre-trained SAE artifact if one is available\n"
+            "  - Use a different encoder that has a trained SAE artifact"
+        )
+        super().__init__(message)
+
+
+class MemoryBudgetExceededError(EmbeddingArtError):
+    """Raised when loading the requested encoders would exceed the memory budget."""
+
+    def __init__(self, requested_mb: int, available_mb: int, encoders: list[str]) -> None:
+        self.requested_mb = requested_mb
+        self.available_mb = available_mb
+        self.encoders = encoders
+
+        if encoders:
+            encoders_str = ", ".join(encoders)
+            encoders_line = f"Encoders requested: {encoders_str}\n"
+        else:
+            encoders_line = ""
+
+        overage_mb = requested_mb - available_mb
+        message = (
+            f"Memory budget exceeded: requested {requested_mb} MB, "
+            f"but only {available_mb} MB is available "
+            f"({overage_mb} MB over budget).\n\n"
+            f"{encoders_line}"
+            "Suggestions:\n"
+            "  - Load fewer encoders simultaneously\n"
+            "  - Increase the memory budget with --memory-budget\n"
+            "  - Use a machine with more available RAM or VRAM\n"
+            "  - Unload unused models before loading new ones"
+        )
+        super().__init__(message)
+
+
+class FeatureNotFoundError(EmbeddingArtError):
+    """Raised when an SAE feature name is not in the vocabulary."""
+
+    # Show at most this many suggestions to keep the message readable.
+    _MAX_SUGGESTIONS = 10
+
+    def __init__(self, feature_name: str, available: list[str]) -> None:
+        self.feature_name = feature_name
+        self.available = available
+
+        if available:
+            shown = available[: self._MAX_SUGGESTIONS]
+            available_str = "\n".join(f"  - {f}" for f in shown)
+            remainder = len(available) - len(shown)
+            truncation = f"\n  ... and {remainder} more" if remainder else ""
+            suggestion = f"Known features (sample):\n{available_str}{truncation}"
+        else:
+            suggestion = "No features are available in the current SAE vocabulary."
+
+        message = (
+            f"Feature '{feature_name}' not found in the SAE vocabulary.\n\n"
+            f"{suggestion}\n\n"
+            "Suggestions:\n"
+            "  - Check the feature name for typos\n"
+            "  - Use embed-art list-features to browse available features\n"
+            "  - Ensure you are using the correct SAE artifact for this encoder"
+        )
+        super().__init__(message)
