@@ -16,6 +16,7 @@ import torch.nn.functional as F
 
 if TYPE_CHECKING:
     from embedding_art.encoders.base import Encoder
+    from embedding_art.sae.lens import SAEDecomposition, SAELens
 
 
 @dataclass
@@ -238,6 +239,69 @@ class Concept:
         """Compute cosine similarity with another concept."""
         sim = F.cosine_similarity(self.embedding, other.embedding, dim=-1)
         return sim.item()
+
+    # === SAE integration ===
+
+    def decompose(self, sae: SAELens) -> SAEDecomposition:
+        """
+        Decompose this concept's embedding into interpretable SAE features.
+
+        The returned ``SAEDecomposition`` contains the sparse activation vector,
+        a human-readable ``active_features`` dict (feature name → activation
+        strength), and the normalised reconstruction error.
+
+        Parameters
+        ----------
+        sae:
+            A trained :class:`~embedding_art.sae.lens.SAELens` instance whose
+            ``embed_dim`` must match this concept's embedding dimension.
+
+        Returns
+        -------
+        SAEDecomposition
+            The sparse decomposition of this concept.
+        """
+        return sae.decompose(self.embedding)
+
+    @classmethod
+    def from_features(
+        cls,
+        sae: SAELens,
+        features: dict[str, float],
+    ) -> Concept:
+        """
+        Build a concept from named SAE features.
+
+        Constructs a synthetic embedding by placing the given feature strengths
+        into the sparse activation vector and decoding through the SAE's decoder
+        matrix.  The result is L2-normalised so it sits on the unit hypersphere.
+
+        Parameters
+        ----------
+        sae:
+            A trained :class:`~embedding_art.sae.lens.SAELens` instance.
+        features:
+            Mapping of feature name → activation strength.  Any feature not
+            listed defaults to zero activation.
+
+        Returns
+        -------
+        Concept
+            A concept whose embedding is the normalised SAE reconstruction.
+
+        Raises
+        ------
+        ~embedding_art.exceptions.FeatureNotFoundError
+            If any key in *features* is not present in the SAE vocabulary.
+        """
+        from embedding_art.sae.lens import SAEDecomposition
+
+        decomp = SAEDecomposition.from_dict(features, sae)
+        embedding = sae.reconstruct(decomp)
+        return cls(
+            embedding=F.normalize(embedding, dim=-1),
+            description=f"features:{features}",
+        )
 
     def __repr__(self) -> str:
         device = self.embedding.device
