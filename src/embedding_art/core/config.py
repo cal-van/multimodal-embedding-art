@@ -49,6 +49,10 @@ class LossConfig:
     feature_matching_layers: list[int] | str = "every_4th"
     sae_feature_weight: float = 0.0
     sae_target_features: dict[str, float] | None = None
+    # Optional regularizer; typed as Any to avoid a circular import with
+    # embedding_art.regularizers.  Pass a CompositeRegularizer (or any callable
+    # matching the Regularizer protocol) here if regularization is desired.
+    regularization: Any = None
 
 
 @dataclass
