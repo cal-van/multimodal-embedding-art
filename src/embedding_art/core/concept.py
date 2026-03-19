@@ -34,7 +34,8 @@ class Concept:
 
     embedding: torch.Tensor  # Shape: [1, embed_dim], normalized
     description: str = ""
-    text_source: str | None = None # Original text if created from text
+    text_source: str | None = None  # Original text if created from text
+    source_input: torch.Tensor | None = None  # Ephemeral raw input; never persisted
 
     def __post_init__(self):
         """Ensure embedding is normalized."""
@@ -111,11 +112,12 @@ class Concept:
         )
 
     def to(self, device: str | torch.device) -> Concept:
-        """Move embedding to device."""
+        """Move embedding (and source_input if present) to device."""
         return Concept(
             embedding=self.embedding.to(device),
             description=self.description,
             text_source=self.text_source,
+            source_input=self.source_input.to(device) if self.source_input is not None else None,
         )
 
     # === Arithmetic operations ===

@@ -41,6 +41,17 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
 
 
 @dataclass
+class LossConfig:
+    """Configuration for the composite loss function."""
+
+    similarity_weight: float = 1.0
+    feature_matching_weight: float = 0.5
+    feature_matching_layers: list[int] | str = "every_4th"
+    sae_feature_weight: float = 0.0
+    sae_target_features: dict[str, float] | None = None
+
+
+@dataclass
 class AugmentationConfig:
     """Configuration for augmentation during optimization."""
 
@@ -71,7 +82,11 @@ class OptimizationConfig:
     seed: int | None = None
 
     # Guidance
-    guidance_scale: float = 0.0 # ImageBind guidance scale
+    guidance_scale: float = 0.0  # ImageBind guidance scale
+    normalize_gradients: bool = False  # Whether to normalize gradients for stability
+
+    # Loss function
+    loss: LossConfig = field(default_factory=LossConfig)
 
     def __post_init__(self):
         if isinstance(self.augmentation, dict):
