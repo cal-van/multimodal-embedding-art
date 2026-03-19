@@ -84,6 +84,7 @@ class SDXLDiffusionGenerator:
         imagebind_guidance_scale: float = 0.0, # How much to force ImageBind concept
         regularizers: Optional[Any] = None, # Regularizers
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        normalize_gradients: bool = False,
         **kwargs
     ) -> PIL.Image.Image:
         """
@@ -219,16 +220,25 @@ class SDXLDiffusionGenerator:
                              
                              # 5. Backward
                              # Calculate raw gradient
+                             # 5. Backward / Calculate Gradient
                              grad = torch.autograd.grad(loss, latents)[0]
                              
-                             # Remove Normalization (it killed dynamics/focus)
-                             # Use Clipping instead to prevent "Deep Fried" explosions
-                             # Clip gradients to a safe range
-                             grad = torch.clamp(grad, GRADIENT_CLIP_MIN, GRADIENT_CLIP_MAX)
-                             
-                             # 6. Update Latent
-                             # Use guidance_scale as magnitude multiplier
-                             latents = latents - grad.detach() * imagebind_guidance_scale
+                             # 6. Apply Gradient Logic
+                             if normalize_gradients:
+                                 # Normalized Gradient Ascent: Direction * Step Size
+                                 # We treat 'imagebind_guidance_scale' as a step size roughly scaled.
+                                 # Standard approx: 1000 scale -> 1.0 step size. 
+                                 # Normalize vector to length 1, then multiply.
+                                 if grad is not None:
+                                     grad = F.normalize(grad, dim=-1) * (imagebind_guidance_scale * 0.002) 
+                             else:
+                                 # Standard Gradient Ascent: Raw Gradient * Scale
+                                 # Clamped to prevent explosions
+                                 grad = torch.clamp(grad, GRADIENT_CLIP_MIN, GRADIENT_CLIP_MAX)
+                                 grad = grad * imagebind_guidance_scale
+
+                             # Update Latents
+                             latents = latents - grad
                              
                              # Track metrics
                              loss_val = loss.item()
