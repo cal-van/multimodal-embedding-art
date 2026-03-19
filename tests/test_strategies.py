@@ -518,3 +518,247 @@ class TestEncoderNameInResult:
         result = strategy.render(target, generator, encoder, config)
 
         assert result.encoder_name == "differentiable_mock"
+
+
+# ---------------------------------------------------------------------------
+# DiffusionGuidanceStrategy helpers
+# ---------------------------------------------------------------------------
+
+
+class GuidedMockGenerator:
+    """Mock generator that implements generate_guided() and returns a RenderResult."""
+
+    def __init__(
+        self,
+        output_channels: int = 4,
+        output_size: int = 8,
+        return_raw_tensor: bool = False,
+    ) -> None:
+        self._output_channels = output_channels
+        self._output_size = output_size
+        self._return_raw_tensor = return_raw_tensor
+        self.generate_guided_calls: list[dict] = []
+
+    def generate_guided(
+        self,
+        target_embedding: torch.Tensor,
+        encoder: Any,
+        loss_fn: Any,
+        config: Any,
+    ) -> Any:
+        """Record call arguments and return a synthetic result."""
+        self.generate_guided_calls.append(
+            {
+                "target_embedding": target_embedding,
+                "encoder": encoder,
+                "loss_fn": loss_fn,
+                "config": config,
+            }
+        )
+
+        output = torch.rand(1, self._output_channels, self._output_size, self._output_size)
+
+        if self._return_raw_tensor:
+            return output
+
+        from embedding_art.core.render_result import OptimizationHistory, RenderResult
+
+        history = OptimizationHistory()
+        return RenderResult(
+            output=output.detach(),
+            history=history,
+            encoder_name="guided_mock",
+            final_similarity=0.75,
+            config=config,
+        )
+
+
+# ---------------------------------------------------------------------------
+# DiffusionGuidanceStrategy tests
+# ---------------------------------------------------------------------------
+
+
+class TestDiffusionGuidanceStrategyInit:
+    """DiffusionGuidanceStrategy can be constructed with and without SAE."""
+
+    def test_default_init_has_no_sae(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+
+        assert strategy.sae is None
+
+    def test_init_with_sae_stores_it(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        sentinel = object()
+        strategy = DiffusionGuidanceStrategy(sae=sentinel)
+
+        assert strategy.sae is sentinel
+
+
+class TestDiffusionGuidanceStrategySatisfiesProtocol:
+    """DiffusionGuidanceStrategy must satisfy the RenderingStrategy protocol."""
+
+    def test_has_render_method(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+
+        assert hasattr(strategy, "render")
+        assert callable(strategy.render)
+
+    def test_is_instance_of_rendering_strategy_protocol(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy, RenderingStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+
+        assert isinstance(strategy, RenderingStrategy)
+
+
+class TestDiffusionGuidanceStrategyDelegation:
+    """render() delegates to generator.generate_guided() exactly once."""
+
+    def test_calls_generate_guided_once(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator()
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        strategy.render(target, generator, encoder, config)
+
+        assert len(generator.generate_guided_calls) == 1
+
+    def test_passes_target_embedding_to_generate_guided(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator()
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        strategy.render(target, generator, encoder, config)
+
+        call_kwargs = generator.generate_guided_calls[0]
+        assert torch.equal(call_kwargs["target_embedding"], target.embedding)
+
+    def test_passes_encoder_to_generate_guided(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator()
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        strategy.render(target, generator, encoder, config)
+
+        call_kwargs = generator.generate_guided_calls[0]
+        assert call_kwargs["encoder"] is encoder
+
+    def test_passes_config_to_generate_guided(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator()
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        strategy.render(target, generator, encoder, config)
+
+        call_kwargs = generator.generate_guided_calls[0]
+        assert call_kwargs["config"] is config
+
+
+class TestDiffusionGuidanceStrategyReturnValue:
+    """render() returns a RenderResult regardless of generator output type."""
+
+    def test_returns_render_result_when_generator_returns_render_result(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator(return_raw_tensor=False)
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        result = strategy.render(target, generator, encoder, config)
+
+        assert isinstance(result, RenderResult)
+
+    def test_returns_render_result_when_generator_returns_raw_tensor(self):
+        """When generate_guided() returns a raw tensor, it must be wrapped."""
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator(return_raw_tensor=True)
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        result = strategy.render(target, generator, encoder, config)
+
+        assert isinstance(result, RenderResult)
+
+    def test_wraps_raw_tensor_into_output_field(self):
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator(return_raw_tensor=True)
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        result = strategy.render(target, generator, encoder, config)
+
+        assert isinstance(result.output, torch.Tensor)
+
+    def test_passthrough_render_result_from_generator(self):
+        """When generator already returns a RenderResult, return it unchanged."""
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator(return_raw_tensor=False)
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        result = strategy.render(target, generator, encoder, config)
+
+        # The mock sets final_similarity=0.75 on the RenderResult it returns
+        assert result.final_similarity == 0.75
+
+    def test_encoder_name_populated_for_wrapped_tensor(self):
+        """Wrapped raw-tensor result should populate encoder_name from card."""
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator(return_raw_tensor=True)
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        result = strategy.render(target, generator, encoder, config)
+
+        assert result.encoder_name == "differentiable_mock"
+
+    def test_empty_history_for_wrapped_tensor(self):
+        """Wrapped raw-tensor result should have an empty OptimizationHistory."""
+        from embedding_art.core.render_result import OptimizationHistory
+        from embedding_art.core.strategies import DiffusionGuidanceStrategy
+
+        strategy = DiffusionGuidanceStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = GuidedMockGenerator(return_raw_tensor=True)
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config()
+
+        result = strategy.render(target, generator, encoder, config)
+
+        assert isinstance(result.history, OptimizationHistory)
+        assert len(result.history) == 0

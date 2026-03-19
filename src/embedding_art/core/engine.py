@@ -249,6 +249,83 @@ class EmbeddingArtEngine:
             )
         return results
 
+    def render_interpolation(
+        self,
+        spec_a: Any,
+        spec_b: Any,
+        steps: int = 10,
+        encoder_name: str | None = None,
+        output_modality: str = "image",
+        config: OptimizationConfig | None = None,
+    ) -> list[Any]:
+        """Render a slerp interpolation between two concepts.
+
+        Constructs ``steps`` evenly-spaced interpolation points between the
+        two concepts using spherical linear interpolation (slerp) and renders
+        each one independently via :meth:`render`.  The endpoints (t=0 and
+        t=1) are always included.
+
+        Args:
+            spec_a: Starting concept — a ``ConceptSpec`` or resolved
+                ``Concept``.
+            spec_b: Ending concept — a ``ConceptSpec`` or resolved
+                ``Concept``.
+            steps: Number of interpolation points (including both endpoints).
+                Must be >= 1.  When ``steps=1`` the midpoint (t=0.5) is used.
+            encoder_name: Name of the encoder to load from
+                ``self._registry``.  Falls back to ``self.encoder`` when
+                ``None``.
+            output_modality: Generator modality key (e.g. ``"image"``).
+            config: Shared optimization configuration for all renders.
+                Defaults to ``OptimizationConfig()`` when ``None``.
+
+        Returns:
+            List of ``RenderResult`` objects, one per interpolation step, in
+            order from ``spec_a`` (t=0) to ``spec_b`` (t=1).
+
+        Raises:
+            ValueError: When no encoder is available.
+        """
+        from embedding_art.core.concept import Concept
+        from embedding_art.core.concept_spec import ConceptSpec
+        from embedding_art.core.strategies import OptimizationStrategy
+
+        config = config or OptimizationConfig()
+
+        # Resolve encoder
+        if encoder_name is not None and hasattr(self, "_registry"):
+            encoder = self._registry.load(encoder_name)
+        elif self.encoder is not None:
+            encoder = self.encoder
+        else:
+            raise ValueError(
+                "No encoder available. Provide encoder_name or set a default encoder "
+                "via from_registry(default_encoder=...) or by passing encoder to __init__."
+            )
+
+        # Materialize concepts from specs when needed
+        if isinstance(spec_a, ConceptSpec) and hasattr(encoder, "encode"):
+            concept_a = encoder.encode(spec_a)
+        else:
+            concept_a = spec_a
+
+        if isinstance(spec_b, ConceptSpec) and hasattr(encoder, "encode"):
+            concept_b = encoder.encode(spec_b)
+        else:
+            concept_b = spec_b
+
+        generator = self.get_generator(output_modality)
+        strategy = OptimizationStrategy()
+        results = []
+
+        for i in range(steps):
+            t = i / max(steps - 1, 1)
+            interpolated = Concept.slerp(concept_a, concept_b, t)
+            result = strategy.render(interpolated, generator, encoder, config)
+            results.append(result)
+
+        return results
+
     def register_generator(self, name: str, generator: Generator) -> None:
         """Register a generator for a modality."""
         self._generators[name] = generator

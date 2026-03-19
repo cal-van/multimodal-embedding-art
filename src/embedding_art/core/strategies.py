@@ -216,3 +216,73 @@ class OptimizationStrategy:
         if hasattr(encoder, "card") and encoder.card is not None:
             return encoder.card.name
         return "unknown"
+
+
+class DiffusionGuidanceStrategy:
+    """Diffusion denoising with per-step embedding guidance.
+
+    Unlike ``OptimizationStrategy`` (which runs a loop around a frozen generator),
+    this injects gradients INTO the diffusion denoising loop at each timestep.
+    The generator and the optimization are interleaved, not sequential.
+
+    The strategy delegates the denoising loop to the generator via
+    ``generate_guided()``, which is responsible for injecting the embedding
+    loss at each diffusion timestep.  This keeps the strategy thin and the
+    generator in control of its own scheduling.
+
+    Args:
+        sae: Optional sparse autoencoder for SAE feature-space loss.  Passed
+             through to ``CompositeLoss`` unchanged.
+    """
+
+    def __init__(self, sae: Any = None) -> None:
+        self.sae = sae
+
+    def render(
+        self,
+        target: "Concept",
+        generator: Any,
+        encoder: Any,
+        config: OptimizationConfig,
+    ) -> RenderResult:
+        """Delegate to the generator's guided denoising loop.
+
+        The generator is expected to implement ``generate_guided()`` which
+        runs the full diffusion process with per-step embedding feedback.
+        If the generator returns a raw tensor rather than a ``RenderResult``,
+        it is wrapped into one with an empty history.
+
+        Args:
+            target: Target concept embedding to guide toward.
+            generator: A generator implementing ``generate_guided()``.
+            encoder: Encoder used to compute the embedding loss at each step.
+            config: Optimization configuration forwarded to the generator.
+
+        Returns:
+            ``RenderResult`` from the guided generation.
+        """
+        loss_fn = CompositeLoss(config.loss, encoder, sae=self.sae)
+        loss_fn.calibrate(target, encoder)
+
+        # Delegate to the generator's guided generation.
+        # The generator manages its own denoising loop with per-step guidance.
+        result = generator.generate_guided(
+            target_embedding=target.embedding,
+            encoder=encoder,
+            loss_fn=loss_fn,
+            config=config,
+        )
+
+        # If generator returns a raw image tensor, wrap in RenderResult.
+        if not isinstance(result, RenderResult):
+            encoder_name = OptimizationStrategy._encoder_name(encoder)
+            output = result if isinstance(result, torch.Tensor) else torch.zeros(1)
+            return RenderResult(
+                output=output,
+                history=OptimizationHistory(),
+                encoder_name=encoder_name,
+                final_similarity=0.0,
+                config=config,
+            )
+
+        return result
