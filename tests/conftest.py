@@ -13,6 +13,10 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from embedding_art.core.concept import Concept
+from embedding_art.core.concept_spec import ConceptSpec
+from embedding_art.encoders.registry import EncoderCapability, EncoderCard
+
 
 class MockEncoder:
     """
@@ -125,6 +129,79 @@ class MockEncoder:
         generator = torch.Generator().manual_seed(seed)
         embedding = torch.randn(1, self._embedding_dim, generator=generator)
         return F.normalize(embedding, dim=-1).to(self._device)
+
+    # ------------------------------------------------------------------
+    # v2 duck-typed interface
+    # ------------------------------------------------------------------
+
+    @property
+    def card(self) -> EncoderCard:
+        """Return an EncoderCard describing this mock encoder's capabilities."""
+        return EncoderCard(
+            name="mock",
+            capabilities=(
+                EncoderCapability.TEXT
+                | EncoderCapability.IMAGE
+                | EncoderCapability.AUDIO
+                | EncoderCapability.VIDEO
+                | EncoderCapability.BACKPROP_OPTIMIZABLE
+            ),
+            embedding_dim=self._embedding_dim,
+            memory_estimate_mb=100,
+            backprop_cost=1.0,
+        )
+
+    def encode(self, spec: ConceptSpec) -> Concept:
+        """Dispatch a ConceptSpec to the appropriate encode_* method.
+
+        Args:
+            spec: Concept specification.  The first non-None modality field is
+                  used; priority order is text > image > audio > video.
+
+        Returns:
+            A Concept whose embedding matches the encoded modality.
+
+        Raises:
+            ValueError: If no modality field is set on *spec*.
+        """
+        if spec.text is not None:
+            embedding = self.encode_text(spec.text)
+            return Concept(embedding=embedding, description=f'text:"{spec.text}"')
+        if spec.image is not None:
+            embedding = self.encode_image(spec.image)
+            return Concept(embedding=embedding, description=f"image:{spec.image.name}")
+        if spec.audio is not None:
+            embedding = self.encode_audio(spec.audio)
+            return Concept(embedding=embedding, description=f"audio:{spec.audio.name}")
+        if spec.video is not None:
+            embedding = self.encode_video(spec.video)
+            return Concept(embedding=embedding, description=f"video:{spec.video.name}")
+        raise ValueError(
+            "ConceptSpec has no modality field set — "
+            "at least one of text/image/audio/video must be provided"
+        )
+
+    def encode_for_optimization(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Return a deterministic normalized embedding derived from *tensor*.
+
+        The implementation hashes the tensor's shape and sum so that
+        identical inputs always produce the same output, while different
+        inputs produce different embeddings.  Gradients do *not* flow through
+        this mock (unlike the real ImageBind implementation).
+
+        Args:
+            tensor: Input tensor, e.g. [B, C, H, W] image batch.
+
+        Returns:
+            Normalized embedding tensor of shape [1, embedding_dim].
+        """
+        seed = hash((tuple(tensor.shape), float(tensor.sum().item()))) % (2**32)
+        gen = torch.Generator().manual_seed(seed)
+        embedding = torch.randn(1, self._embedding_dim, generator=gen)
+        return F.normalize(embedding, dim=-1).to(self._device)
+
+    def unload(self) -> None:
+        """No-op: mock encoder holds no heavy resources to release."""
 
 
 class MockGenerator:

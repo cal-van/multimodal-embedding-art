@@ -7,12 +7,17 @@ We use it as our primary encoder for multimodal concept representation.
 Requires: pip install -e . from https://github.com/facebookresearch/ImageBind
 """
 
+# ImageBind imports - will fail if not installed
+import logging
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from embedding_art.core.concept import Concept
+from embedding_art.core.concept_spec import ConceptSpec
+from embedding_art.encoders.registry import EncoderCapability, EncoderCard
 from embedding_art.exceptions import (
     EncoderError,
     ImageBindNotInstalledError,
@@ -20,21 +25,20 @@ from embedding_art.exceptions import (
     OutOfMemoryError,
 )
 
-# ImageBind imports - will fail if not installed
-import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from imagebind import data as imagebind_data
     from imagebind.models import imagebind_model
     from imagebind.models.imagebind_model import ModalityType
+
+    from imagebind import data as imagebind_data
 
     IMAGEBIND_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"ImageBind import failed: {e}")
     # Don't print traceback unless debug logging is enabled
     logger.debug("ImageBind import failure traceback:", exc_info=True)
-    
+
     IMAGEBIND_AVAILABLE = False
     imagebind_data = None
     imagebind_model = None
@@ -283,3 +287,67 @@ class ImageBindEncoder:
                     original_error=e,
                 ) from e
             raise EncoderError(modality="video", original_error=e) from e
+
+    # ------------------------------------------------------------------
+    # v2 duck-typed interface
+    # ------------------------------------------------------------------
+
+    @property
+    def card(self) -> EncoderCard:
+        """Return an EncoderCard describing ImageBind's capabilities."""
+        return EncoderCard(
+            name="imagebind",
+            capabilities=(
+                EncoderCapability.TEXT
+                | EncoderCapability.IMAGE
+                | EncoderCapability.AUDIO
+                | EncoderCapability.VIDEO
+                | EncoderCapability.DEPTH
+                | EncoderCapability.BACKPROP_OPTIMIZABLE
+            ),
+            embedding_dim=self.embedding_dim,
+            memory_estimate_mb=3000,
+            backprop_cost=1.0,
+        )
+
+    def encode(self, spec: ConceptSpec) -> Concept:
+        """Dispatch a ConceptSpec to the appropriate encode_* method.
+
+        Priority order: text > image > audio > video.
+
+        Args:
+            spec: Concept specification.
+
+        Returns:
+            A Concept whose embedding is derived from the chosen modality.
+
+        Raises:
+            ValueError: If no modality field is set on *spec*.
+        """
+        if spec.text is not None:
+            embedding = self.encode_text(spec.text)
+            return Concept(embedding=embedding, description=f'text:"{spec.text}"')
+        if spec.image is not None:
+            embedding = self.encode_image(spec.image)
+            return Concept(embedding=embedding, description=f"image:{spec.image.name}")
+        if spec.audio is not None:
+            embedding = self.encode_audio(spec.audio)
+            return Concept(embedding=embedding, description=f"audio:{spec.audio.name}")
+        if spec.video is not None:
+            embedding = self.encode_video(spec.video)
+            return Concept(embedding=embedding, description=f"video:{spec.video.name}")
+        raise ValueError(
+            "ConceptSpec has no modality field set — "
+            "at least one of text/image/audio/video must be provided"
+        )
+
+    def unload(self) -> None:
+        """Delete the model and clear the device cache to free memory."""
+        import gc
+
+        del self.model
+        gc.collect()
+        if self._device.type == "mps":
+            torch.mps.empty_cache()
+        elif self._device.type == "cuda":
+            torch.cuda.empty_cache()

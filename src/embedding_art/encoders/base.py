@@ -2,6 +2,18 @@
 Base encoder protocol.
 
 Encoders map various modalities into a shared embedding space.
+
+v2 duck-typed extensions
+------------------------
+The following methods are part of the v2 encoder interface but are intentionally
+*not* declared in the ``Encoder`` Protocol.  This preserves backward compatibility
+— existing encoders that implement only the v1 methods still satisfy the protocol.
+Callers that need v2 behaviour check for the methods with ``hasattr``.
+
+* ``card -> EncoderCard`` — metadata describing capabilities and memory footprint.
+* ``encode(spec: ConceptSpec) -> Concept`` — single-method dispatch from a spec.
+* ``encode_for_optimization(tensor: Tensor) -> Tensor`` — differentiable encoding.
+* ``unload() -> None`` — release model weights from memory.
 """
 
 from pathlib import Path
@@ -12,7 +24,12 @@ from PIL import Image
 
 
 class Encoder(Protocol):
-    """Protocol for multimodal encoders."""
+    """Protocol for multimodal encoders.
+
+    All four modality methods (encode_text, encode_image, encode_audio,
+    encode_video) are required for v1 compliance.  See the module docstring for
+    the v2 duck-typed extensions.
+    """
 
     @property
     def embedding_dim(self) -> int:
