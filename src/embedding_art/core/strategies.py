@@ -213,9 +213,14 @@ class OptimizationStrategy:
     @staticmethod
     def _encoder_name(encoder: Any) -> str:
         """Extract a human-readable name from *encoder* if available."""
-        if hasattr(encoder, "card") and encoder.card is not None:
-            return encoder.card.name
-        return "unknown"
+        return _encoder_name(encoder)
+
+
+def _encoder_name(encoder: Any) -> str:
+    """Extract a human-readable name from an encoder if available."""
+    if hasattr(encoder, "card") and encoder.card is not None:
+        return encoder.card.name
+    return "unknown"
 
 
 class DiffusionGuidanceStrategy:
@@ -275,7 +280,7 @@ class DiffusionGuidanceStrategy:
 
         # If generator returns a raw image tensor, wrap in RenderResult.
         if not isinstance(result, RenderResult):
-            encoder_name = OptimizationStrategy._encoder_name(encoder)
+            encoder_name = _encoder_name(encoder)
             output = result if isinstance(result, torch.Tensor) else torch.zeros(1)
             return RenderResult(
                 output=output,

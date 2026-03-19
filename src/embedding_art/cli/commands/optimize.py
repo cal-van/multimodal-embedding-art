@@ -60,6 +60,18 @@ from embedding_art.cli.utils import DEFAULT_VIDEO_FPS
     help="Number of optimization steps (default: 2000 or from config)",
 )
 @click.option(
+    "--guidance-scale",
+    type=float,
+    default=250.0,
+    help="Strength of ImageBind guidance (default: 250.0)",
+)
+@click.option(
+    "--tv-weight",
+    type=float,
+    default=0.25,
+    help="Total Variation weight for smoothness (default: 0.25)",
+)
+@click.option(
     "--lr",
     type=float,
     default=None,
@@ -119,6 +131,18 @@ from embedding_art.cli.utils import DEFAULT_VIDEO_FPS
     default=None,
     help="Memory limit in MB (default: 48GB)",
 )
+@click.option(
+    "--spectral-weight",
+    type=float,
+    default=0.01,
+    help="Spectral regularization weight for denoising (default: 0.01)",
+)
+@click.option(
+    "--normalize-gradients",
+    is_flag=True,
+    default=False,
+    help="Normalize gradients for stability (avoids 'deep frying' at high scales)",
+)
 @click.pass_context
 def optimize(
     ctx: click.Context,
@@ -128,6 +152,10 @@ def optimize(
     output,
     output_path,
     steps,
+    guidance_scale,
+    tv_weight,
+    spectral_weight,
+    normalize_gradients,
     lr,
     seed,
     device,
@@ -151,6 +179,10 @@ def optimize(
     # Merge CLI args with config file values (needed for both dry-run and real run)
     opt_config = loaded_config.get("optimization", {})
     steps = steps if steps is not None else opt_config.get("steps", 2000)
+    guidance_scale = guidance_scale if guidance_scale is not None else opt_config.get("guidance_scale", 250.0)
+    tv_weight = tv_weight if tv_weight is not None else opt_config.get("tv_weight", 0.25)
+    spectral_weight = spectral_weight if spectral_weight is not None else opt_config.get("spectral_weight", 0.01)
+    normalize_gradients = normalize_gradients if normalize_gradients else opt_config.get("normalize_gradients", False)
     lr = lr if lr is not None else opt_config.get("learning_rate", 0.1)
     seed = seed if seed is not None else opt_config.get("seed")
     device = device if device is not None else loaded_config.get("device", "mps")
@@ -265,15 +297,30 @@ def optimize(
             steps=steps,
             learning_rate=lr,
             seed=seed,
+            guidance_scale=guidance_scale,
+            normalize_gradients=normalize_gradients,
         )
+
+        from embedding_art.regularizers import CompositeRegularizer, TotalVariation, SpectralRegularizer, LatentNorm
+        regularizers = None
+        if output == "image":
+             # Use CLI provided TV weight (and hardcoded others for now)
+             regularizers = CompositeRegularizer(
+                regularizers=[
+                    TotalVariation(weight=tv_weight), 
+                    SpectralRegularizer(weight=spectral_weight), # Anti-static
+                    LatentNorm(weight=0.5),           # Latent validity
+                ]
+            )
 
         if resume:
             console.print(f"[bold]Resuming from checkpoint: {resume}[/bold]")
-        console.print(f"[bold]Optimizing for {steps} steps...[/bold]")
+        console.print(f"[bold]Optimizing for {steps} steps with scale {guidance_scale}, TV {tv_weight}, Spectral {spectral_weight}...[/bold]")
         result = engine.optimize(
             target,
             output,
             config,
+            regularizers=regularizers,
             checkpoint_dir=Path(checkpoint_dir) if checkpoint_dir else None,
             resume_from=Path(resume) if resume else None,
             memory_config=memory_config,
