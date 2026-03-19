@@ -19,6 +19,10 @@ from embedding_art.cli.commands.batch import batch
 from embedding_art.cli.commands.upscale import upscale
 from embedding_art.cli.commands.visualize import visualize
 from embedding_art.cli.commands.web import web
+from embedding_art.cli.commands.render import render
+from embedding_art.cli.commands.compare import compare as compare_cmd
+from embedding_art.cli.commands.decompose import decompose
+from embedding_art.cli.commands.sae import sae
 
 
 @click.group()
@@ -61,6 +65,10 @@ cli.add_command(batch)
 cli.add_command(upscale)
 cli.add_command(visualize)
 cli.add_command(web)
+cli.add_command(render)
+cli.add_command(compare_cmd, name="compare-encoders")
+cli.add_command(decompose)
+cli.add_command(sae)
 
 
 if __name__ == "__main__":
