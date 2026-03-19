@@ -5,7 +5,6 @@ Tests verify:
 - LossBreakdown stores total and per-component losses
 - OptimizationHistory tracks steps, accumulates breakdowns, computes final similarity
 - RenderResult wraps output with metadata and optional fields
-- OptimizationResult backward-compat alias resolves to RenderResult
 """
 
 from pathlib import Path
@@ -17,7 +16,6 @@ from embedding_art.core.config import OptimizationConfig
 from embedding_art.core.render_result import (
     LossBreakdown,
     OptimizationHistory,
-    OptimizationResult,
     RenderResult,
 )
 
@@ -365,20 +363,3 @@ class TestRenderResultCreation:
 # =============================================================================
 
 
-class TestOptimizationResultAlias:
-    """Tests that OptimizationResult is a backward-compat alias for RenderResult."""
-
-    def test_optimization_result_is_render_result(self) -> None:
-        """OptimizationResult should be the same class as RenderResult."""
-        assert OptimizationResult is RenderResult
-
-    def test_can_construct_via_alias(self) -> None:
-        """Should be constructable through the OptimizationResult alias."""
-        result = OptimizationResult(
-            output=torch.rand(1, 3, 64, 64),
-            history=OptimizationHistory(),
-            encoder_name="imagebind",
-            final_similarity=0.75,
-        )
-
-        assert isinstance(result, RenderResult)
