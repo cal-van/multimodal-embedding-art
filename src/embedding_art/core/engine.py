@@ -112,12 +112,142 @@ class EmbeddingArtEngine:
 
     def __init__(
         self,
-        encoder: Encoder,
+        encoder: Encoder | None,
         device: str = "mps",
     ):
         self.encoder = encoder
         self.device = torch.device(device)
         self._generators: dict[str, Generator] = {}
+
+    # ------------------------------------------------------------------
+    # v2 factory
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_registry(
+        cls,
+        registry: Any,
+        default_encoder: str | None = None,
+        device: str = "mps",
+    ) -> "EmbeddingArtEngine":
+        """Create an engine from an EncoderRegistry.
+
+        Args:
+            registry: An ``EncoderRegistry`` instance.
+            default_encoder: Name of the encoder to pre-load as ``self.encoder``.
+                When ``None``, ``self.encoder`` is left as ``None`` and callers
+                must pass ``encoder_name`` to :meth:`render`.
+            device: PyTorch device string.
+
+        Returns:
+            Configured ``EmbeddingArtEngine`` with ``_registry`` set.
+        """
+        encoder = None
+        if default_encoder is not None:
+            encoder = registry.load(default_encoder)
+        instance = cls(encoder=encoder, device=device)
+        instance._registry = registry
+        return instance
+
+    # ------------------------------------------------------------------
+    # v2 rendering API
+    # ------------------------------------------------------------------
+
+    def render(
+        self,
+        spec: Any,
+        encoder_name: str | None = None,
+        output_modality: str = "image",
+        strategy: Any = None,
+        config: OptimizationConfig | None = None,
+    ) -> Any:
+        """Render a ConceptSpec (or an already-resolved Concept) via the v2 pipeline.
+
+        The v2 pipeline delegates the optimization loop to an
+        :class:`~embedding_art.core.strategies.OptimizationStrategy`, keeping the
+        engine itself thin.
+
+        Args:
+            spec: A :class:`~embedding_art.core.concept_spec.ConceptSpec` **or** an
+                already-resolved :class:`~embedding_art.core.concept.Concept`.
+            encoder_name: Name of the encoder to load from ``self._registry``.
+                When ``None``, ``self.encoder`` is used as the fallback.
+            output_modality: Generator modality key (e.g. ``"image"``).
+            strategy: An object satisfying the ``RenderingStrategy`` protocol.
+                Defaults to a freshly constructed ``OptimizationStrategy``.
+            config: Optimization hyper-parameters.  Defaults to
+                ``OptimizationConfig()`` when ``None``.
+
+        Returns:
+            :class:`~embedding_art.core.render_result.RenderResult` produced by
+            the strategy.
+
+        Raises:
+            ValueError: When no encoder is available (neither ``encoder_name``
+                resolves via the registry nor ``self.encoder`` is set).
+        """
+        from embedding_art.core.concept_spec import ConceptSpec
+        from embedding_art.core.strategies import OptimizationStrategy
+
+        config = config or OptimizationConfig()
+
+        # Resolve encoder
+        if encoder_name is not None and hasattr(self, "_registry"):
+            encoder = self._registry.load(encoder_name)
+        elif self.encoder is not None:
+            encoder = self.encoder
+        else:
+            raise ValueError(
+                "No encoder available. Provide encoder_name or set a default encoder "
+                "via from_registry(default_encoder=...) or by passing encoder to __init__."
+            )
+
+        # Materialize concept from spec when needed
+        if isinstance(spec, ConceptSpec) and hasattr(encoder, "encode"):
+            target = encoder.encode(spec)
+        else:
+            target = spec  # Already a Concept
+
+        generator = self.get_generator(output_modality)
+
+        if strategy is None:
+            strategy = OptimizationStrategy()
+
+        return strategy.render(target, generator, encoder, config)
+
+    def render_compare(
+        self,
+        spec: Any,
+        encoder_names: list[str],
+        output_modality: str = "image",
+        config: OptimizationConfig | None = None,
+        sequential: bool = False,
+    ) -> dict[str, Any]:
+        """Render the same concept with multiple encoders for comparison.
+
+        Each encoder produces an independent :class:`~embedding_art.core.render_result.RenderResult`,
+        useful for studying how different encoders perceive the same concept.
+
+        Args:
+            spec: Concept specification or resolved Concept.
+            encoder_names: List of registry encoder names to compare.
+            output_modality: Generator modality key.
+            config: Shared optimization configuration for all renders.
+            sequential: Reserved for future parallel execution control.
+                Currently all renders are sequential regardless of this flag.
+
+        Returns:
+            Dict mapping each encoder name to its ``RenderResult``.
+        """
+        results: dict[str, Any] = {}
+        for name in encoder_names:
+            results[name] = self.render(
+                spec,
+                encoder_name=name,
+                output_modality=output_modality,
+                config=config,
+            )
+        return results
 
     def register_generator(self, name: str, generator: Generator) -> None:
         """Register a generator for a modality."""
@@ -164,14 +294,14 @@ class EmbeddingArtEngine:
 
         # Check if generator supports direct generation (Diffusion Pipelines)
         if hasattr(generator, "generate"):
-             return self._run_diffusion_generation(
-                 generator=generator,
-                 target=target,
-                 output_modality=output_modality,
-                 config=config,
-                 regularizers=regularizers,
-                 callback=callback
-             )
+            return self._run_diffusion_generation(
+                generator=generator,
+                target=target,
+                output_modality=output_modality,
+                config=config,
+                regularizers=regularizers,
+                callback=callback,
+            )
 
         # Setup optimization components
         memory_manager: MemoryManager | None = None
@@ -316,36 +446,36 @@ class EmbeddingArtEngine:
         output_modality: str,
         config: OptimizationConfig,
         regularizers: Any,
-        callback: Callable | None
+        callback: Callable | None,
     ) -> OptimizationResult:
         """Run generation using a diffusion pipeline (SDXL, AudioLDM, SVD)."""
-        prompt = target.text_source or target.description 
+        prompt = target.text_source or target.description
         if target.text_source is None:
             # If no text source (e.g. audio concept), use description
             prompt = target.description
-        
+
         # Start tracking
         loss_history: list[float] = []
         similarity_history: list[float] = []
         start_time = time()
-        
+
         # Helper for callback adaptation
         def generation_callback(step: int, loss: float, sim: float, latent: torch.Tensor | None):
             if callback:
                 # Provide empty tensor if latent is None to match signature
                 callback(step, loss, sim, latent if latent is not None else torch.tensor([]))
-        
+
         # Check ImageBind configuration
         imagebind_scale = getattr(config, "guidance_scale", 0.0)
-        
+
         # If ImageBind guidance is active, we want PURE concept visualization.
         # We disable the Text Prompt (human bias) and Text CFG to let ImageBind drive.
         if imagebind_scale > 0:
-            prompt = "" 
-            text_guidance_scale = 0.0 # Disable standard CFG
+            prompt = ""
+            text_guidance_scale = 0.0  # Disable standard CFG
         else:
             text_guidance_scale = self.DEFAULT_CFG_SCALE
-            
+
         params = {
             "prompt": prompt,
             "num_inference_steps": config.steps if config.steps > 0 else self.DEFAULT_STEPS,
@@ -355,28 +485,33 @@ class EmbeddingArtEngine:
             "target_embedding": target.embedding.to(self.device),
             "imagebind_guidance_scale": imagebind_scale,
             "regularizers": regularizers,
+            "normalize_gradients": getattr(config, "normalize_gradients", False),
         }
 
         # Call generator
         final_image = generator.generate(**params)
-        
+
         elapsed = time() - start_time
-        
+
         # Convert PIL to Tensor [1, 3, H, W]
-        img_tensor = TF.to_tensor(final_image).unsqueeze(0).to(self.device) 
-        
+        img_tensor = TF.to_tensor(final_image).unsqueeze(0).to(self.device)
+
         with torch.no_grad():
             final_embedding = self._encode_for_modality(img_tensor, output_modality)
-            final_similarity = F.cosine_similarity(final_embedding, target.embedding.to(self.device), dim=-1).mean().item()
+            final_similarity = (
+                F.cosine_similarity(final_embedding, target.embedding.to(self.device), dim=-1)
+                .mean()
+                .item()
+            )
 
         # VAE Encode result to get a valid latent if possible
         if hasattr(generator, "pipeline") and hasattr(generator.pipeline, "vae"):
-             # Scale to [-1, 1] for VAE
-             img_normalized = img_tensor * 2.0 - 1.0
-             latent_dist = generator.pipeline.vae.encode(img_normalized).latent_dist
-             latent = latent_dist.sample() * generator.pipeline.vae.config.scaling_factor
+            # Scale to [-1, 1] for VAE
+            img_normalized = img_tensor * 2.0 - 1.0
+            latent_dist = generator.pipeline.vae.encode(img_normalized).latent_dist
+            latent = latent_dist.sample() * generator.pipeline.vae.config.scaling_factor
         else:
-             latent = torch.zeros(self.DEFAULT_DUMMY_LATENT_SHAPE) # Dummy
+            latent = torch.zeros(self.DEFAULT_DUMMY_LATENT_SHAPE)  # Dummy
 
         return OptimizationResult(
             final_latent=latent,
@@ -439,9 +574,7 @@ class EmbeddingArtEngine:
             if is_video:
                 augmented = augmented[:, :, :, top : top + crop_h, left : left + crop_w]
                 batch_size, num_frames, channels, _, _ = augmented.shape
-                augmented = augmented.reshape(
-                    batch_size * num_frames, channels, crop_h, crop_w
-                )
+                augmented = augmented.reshape(batch_size * num_frames, channels, crop_h, crop_w)
                 augmented = F.interpolate(
                     augmented, size=(h, w), mode="bilinear", align_corners=False
                 )
@@ -529,8 +662,6 @@ class EmbeddingArtEngine:
         if not path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {path}")
         return torch.load(path, weights_only=True)
-
-
 
     def _optimization_step(
         self,
