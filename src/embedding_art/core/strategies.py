@@ -20,11 +20,14 @@ Section 3: Rendering Strategies
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import torch
+import torch.nn.functional as F  # noqa: N812
 
-from embedding_art.core.config import OptimizationConfig
+from embedding_art.core.config import AugmentationConfig, OptimizationConfig
 from embedding_art.core.loss import CompositeLoss
 from embedding_art.core.render_result import OptimizationHistory, RenderResult
 
@@ -91,6 +94,9 @@ class OptimizationStrategy:
         generator: Any,
         encoder: Any,
         config: OptimizationConfig,
+        callback: Callable[[int, Any, torch.Tensor], None] | None = None,
+        checkpoint_dir: str | Path | None = None,
+        resume_from: str | Path | None = None,
     ) -> RenderResult:
         """Run the optimization loop and return the final result.
 
@@ -99,6 +105,14 @@ class OptimizationStrategy:
             generator: LatentGenerator or DirectGenerator.
             encoder: Encoder used for loss computation.
             config: Optimization configuration.
+            callback: Optional callable invoked each step as
+                ``callback(step, breakdown, output)``.
+            checkpoint_dir: Directory in which to save checkpoint ``.pt`` files.
+                Files are written when ``config.checkpoint_every > 0`` and this
+                argument is not ``None``.
+            resume_from: Path to a checkpoint file produced by a previous run.
+                When supplied, the latent and optimizer state are restored and
+                the loop starts from ``checkpoint['step'] + 1``.
 
         Returns:
             RenderResult with final output and full history.
@@ -121,9 +135,21 @@ class OptimizationStrategy:
         scheduler = self._build_scheduler(optimizer, config)
         history = OptimizationHistory()
 
+        # --- Resume from checkpoint -------------------------------------------
+        start_step = 0
+        if resume_from is not None:
+            checkpoint = torch.load(resume_from, weights_only=True)
+            if latent is not None:
+                latent.data = checkpoint["latent"]
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+            start_step = checkpoint["step"] + 1
+
+        # --- Checkpoint directory setup ---------------------------------------
+        ckpt_dir: Path | None = Path(checkpoint_dir) if checkpoint_dir is not None else None
+
         output: torch.Tensor | None = None
 
-        for step in range(config.steps):
+        for step in range(start_step, config.steps):
             optimizer.zero_grad()
 
             if is_direct:
@@ -131,7 +157,10 @@ class OptimizationStrategy:
             else:
                 output = generator.decode(latent)  # type: ignore[arg-type]
 
-            breakdown = loss_fn(output, target, encoder, latent)
+            # Apply augmentation before loss computation.
+            augmented = self._augment(output, config.augmentation)
+
+            breakdown = loss_fn(augmented, target, encoder, latent)
             breakdown.total.backward()
 
             torch.nn.utils.clip_grad_norm_(optimizable, max_norm=1.0)
@@ -141,6 +170,25 @@ class OptimizationStrategy:
                 scheduler.step()
 
             history.record(step, breakdown)
+
+            if callback is not None:
+                callback(step, breakdown, output)
+
+            # --- Save checkpoint ---------------------------------------------
+            if (
+                ckpt_dir is not None
+                and config.checkpoint_every
+                and step % config.checkpoint_every == 0
+            ):
+                ckpt_dir.mkdir(parents=True, exist_ok=True)
+                torch.save(
+                    {
+                        "latent": latent.detach().clone() if latent is not None else None,
+                        "optimizer_state": optimizer.state_dict(),
+                        "step": step,
+                    },
+                    ckpt_dir / f"checkpoint_{step:06d}.pt",
+                )
 
         final_output = output.detach() if output is not None else torch.zeros(1)
 
@@ -210,6 +258,58 @@ class OptimizationStrategy:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _augment(self, output: torch.Tensor, aug_config: AugmentationConfig) -> torch.Tensor:
+        """Apply random augmentations for robust optimization.
+
+        Only 4-D image tensors ``[B, C, H, W]`` and 5-D video tensors
+        ``[B, F, C, H, W]`` are augmented.  All other shapes (e.g. 1-D audio)
+        are returned unchanged.  When both ``random_crop`` and ``random_flip``
+        are disabled the tensor is returned as-is.
+
+        Args:
+            output: Decoded output from the generator.
+            aug_config: Augmentation configuration.
+
+        Returns:
+            Augmented tensor with the same shape as *output*.
+        """
+        if not aug_config.random_crop and not aug_config.random_flip:
+            return output
+
+        # Only augment spatial tensors.
+        if output.ndim not in (4, 5):
+            return output
+
+        augmented = output
+        is_video = output.ndim == 5
+
+        if aug_config.random_crop:
+            scale = torch.empty(1).uniform_(*aug_config.crop_scale).item()
+            h, w = output.shape[-2:]
+            new_h, new_w = int(h * scale), int(w * scale)
+
+            top = torch.randint(0, max(h - new_h, 1), (1,)).item()
+            left = torch.randint(0, max(w - new_w, 1), (1,)).item()
+
+            if is_video:
+                augmented = augmented[:, :, :, top : top + new_h, left : left + new_w]
+                b, f, c, _, _ = augmented.shape
+                augmented = augmented.reshape(b * f, c, new_h, new_w)
+                augmented = F.interpolate(
+                    augmented, size=(h, w), mode="bilinear", align_corners=False
+                )
+                augmented = augmented.reshape(b, f, c, h, w)
+            else:
+                augmented = augmented[..., top : top + new_h, left : left + new_w]
+                augmented = F.interpolate(
+                    augmented, size=(h, w), mode="bilinear", align_corners=False
+                )
+
+        if aug_config.random_flip and torch.rand(1).item() > 0.5:
+            augmented = torch.flip(augmented, dims=[-1])
+
+        return augmented
+
     @staticmethod
     def _encoder_name(encoder: Any) -> str:
         """Extract a human-readable name from *encoder* if available."""
@@ -245,7 +345,7 @@ class DiffusionGuidanceStrategy:
 
     def render(
         self,
-        target: "Concept",
+        target: Concept,
         generator: Any,
         encoder: Any,
         config: OptimizationConfig,
