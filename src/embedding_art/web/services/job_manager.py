@@ -1,25 +1,27 @@
-import logging
 import asyncio
-import uuid
+import logging
 import os
+import traceback
+import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-import soundfile as sf
 import numpy as np
+import soundfile as sf
 import torch
-import traceback
 from diffusers.utils import export_to_video
+from torchvision.transforms.functional import to_pil_image
 
 from embedding_art import EmbeddingArtEngine, OptimizationConfig
-from embedding_art.core.concept import Concept
-from embedding_art.encoders.imagebind import ImageBindEncoder
-from embedding_art.generators.image import SDXLImageGenerator
+from embedding_art.core.concept_spec import ConceptSpec
+from embedding_art.core.config import LossConfig
+from embedding_art.core.render_result import LossBreakdown
+from embedding_art.encoders.defaults import create_default_registry
 from embedding_art.generators.audio import AudioLDMGenerator
 from embedding_art.generators.video import SVDVideoGenerator
-from embedding_art.regularizers import CompositeRegularizer, TotalVariation, SpectralRegularizer, LatentNorm
 from embedding_art.web.sockets import manager
 
 # Configure logging
@@ -29,32 +31,30 @@ logger = logging.getLogger(__name__)
 # Constants
 DEFAULT_STEPS = 30
 DEFAULT_LEARNING_RATE = 0.1
-DEFAULT_GUIDANCE_SCALE = 250.0 # Clipped Raw Gradients
-IMAGEBIND_SCALE_NORMALIZED = 0.2
 
 # Global engine instance (lazy loaded)
 _engine: EmbeddingArtEngine | None = None
 _executor = ThreadPoolExecutor(max_workers=1)
 
+
 def get_engine() -> EmbeddingArtEngine:
     global _engine
     if _engine is None:
         logger.info("Initializing Engine (this may take a while)...")
-        # Initialize components
-        # Note: Using 'cpu' for safety in dev env if no cuda/mps. 
-        # Ideally check torch.device or allow config.
         device = "mps" if torch.backends.mps.is_available() else "cpu"
-        
-        encoder = ImageBindEncoder(device=device)
-        _engine = EmbeddingArtEngine(encoder=encoder, device=device)
-        
+
+        registry = create_default_registry()
+        _engine = EmbeddingArtEngine.from_registry(
+            registry, default_encoder="imagebind", device=device
+        )
+
         # Register generators
         from embedding_art.generators.diffusion import SDXLDiffusionGenerator
+
         _engine.register_generator("image", SDXLDiffusionGenerator(device=device))
 
-        # Lazy load these if possible to save memory, but for now register all
         try:
-             _engine.register_generator("audio", AudioLDMGenerator(device=device))
+            _engine.register_generator("audio", AudioLDMGenerator(device=device))
         except Exception as e:
             logger.warning(f"Audio generator failed to load: {e}")
 
@@ -62,7 +62,7 @@ def get_engine() -> EmbeddingArtEngine:
             _engine.register_generator("video", SVDVideoGenerator(device=device))
         except Exception as e:
             logger.warning(f"Video generator failed to load: {e}")
-            
+
     return _engine
 
 
@@ -81,6 +81,11 @@ class Job:
     id: str
     target_text: list[str] = field(default_factory=list)
     output_modality: str = "image"
+    encoder_name: str = "imagebind"
+    similarity_weight: float = 1.0
+    feature_matching_weight: float = 0.5
+    # For compare jobs: list of encoder names to compare
+    compare_encoder_names: list[str] = field(default_factory=list)
     status: JobStatus = JobStatus.QUEUED
     created_at: datetime = field(default_factory=datetime.now)
     progress: float = 0.0
@@ -96,10 +101,43 @@ class JobManager:
         self._jobs: dict[str, Job] = {}
         self._lock = asyncio.Lock()
 
-    def create_job(self, target_text: list[str], output_modality: str = "image") -> Job:
-        """Create a new job."""
+    def create_job(
+        self,
+        target_text: list[str],
+        output_modality: str = "image",
+        encoder_name: str = "imagebind",
+        similarity_weight: float = 1.0,
+        feature_matching_weight: float = 0.5,
+    ) -> Job:
+        """Create a new optimization job."""
         job_id = str(uuid.uuid4())
-        job = Job(id=job_id, target_text=target_text, output_modality=output_modality)
+        job = Job(
+            id=job_id,
+            target_text=target_text,
+            output_modality=output_modality,
+            encoder_name=encoder_name,
+            similarity_weight=similarity_weight,
+            feature_matching_weight=feature_matching_weight,
+        )
+        self._jobs[job_id] = job
+        return job
+
+    def create_compare_job(
+        self,
+        target_text: str,
+        output_modality: str = "image",
+        encoder_names: list[str] | None = None,
+        steps: int = DEFAULT_STEPS,
+    ) -> Job:
+        """Create a comparison job that runs render_compare across multiple encoders."""
+        job_id = str(uuid.uuid4())
+        job = Job(
+            id=job_id,
+            target_text=[target_text],
+            output_modality=output_modality,
+            encoder_name=encoder_names[0] if encoder_names else "imagebind",
+            compare_encoder_names=encoder_names or [],
+        )
         self._jobs[job_id] = job
         return job
 
@@ -118,144 +156,187 @@ class JobManager:
             return
 
         loop = asyncio.get_running_loop()
-        # Run in executor to avoid blocking main thread
         loop.run_in_executor(_executor, self._run_job_sync, job, loop)
 
     def _run_job_sync(self, job: Job, loop: asyncio.AbstractEventLoop) -> None:
         """Synchronous execution of the job."""
 
         def broadcast(msg: dict):
-            # Fire and forget broadcast
             try:
                 if loop.is_running():
                     asyncio.run_coroutine_threadsafe(manager.broadcast_to_job(job.id, msg), loop)
             except RuntimeError:
-                pass # Loop might be closed
+                pass
 
-        try:
-            job.status = JobStatus.RUNNING
-            job.logs.append("Initializing engine...")
-            broadcast({"type": "status", "status": "running"})
-            broadcast({"type": "log", "message": "Initializing engine..."})
-            
-            engine = get_engine()
-            
-            job.logs.append(f"Optimizing for targets: {job.target_text}")
-            broadcast({"type": "log", "message": f"Optimizing for targets: {job.target_text}"})
-            
-            # Create target concept
-            # Assuming first text for now. Support multiple later.
-            target_concept = Concept.from_text(job.target_text[0], engine.encoder)
-            
-            # Run optimization / generation
-            
-            # Activate ImageBind Guidance! 
-            # Scale of 250.0 is used with Raw Gradients (Clipped).
-            # Restored dynamics but clipped for safety.
-            config = OptimizationConfig(
-                steps=DEFAULT_STEPS, 
-                learning_rate=DEFAULT_LEARNING_RATE, 
-                guidance_scale=DEFAULT_GUIDANCE_SCALE
+        _run_job_sync_direct(job, loop, broadcast)
+
+
+def _run_job_sync_direct(
+    job: Job,
+    loop: asyncio.AbstractEventLoop,
+    broadcast: Callable[[dict], None],
+) -> None:
+    """
+    Execute a job synchronously, using *broadcast* to send WebSocket messages.
+
+    Extracted from JobManager so tests can call it without needing a live loop.
+    """
+    try:
+        job.status = JobStatus.RUNNING
+        job.logs.append("Initializing engine...")
+        broadcast({"type": "status", "status": "running"})
+        broadcast({"type": "log", "message": "Initializing engine..."})
+
+        engine = get_engine()
+
+        job.logs.append(f"Optimizing for targets: {job.target_text}")
+        broadcast({"type": "log", "message": f"Optimizing for targets: {job.target_text}"})
+
+        # Build ConceptSpec from the first target text
+        spec = ConceptSpec(text=job.target_text[0])
+
+        # Build LossConfig from job loss weights
+        loss_config = LossConfig(
+            similarity_weight=job.similarity_weight,
+            feature_matching_weight=job.feature_matching_weight,
+        )
+
+        config = OptimizationConfig(
+            steps=DEFAULT_STEPS,
+            learning_rate=DEFAULT_LEARNING_RATE,
+            loss=loss_config,
+        )
+
+        # Build the strategy with a progress callback so we can stream updates
+        from embedding_art.core.strategies import OptimizationStrategy
+
+        def progress_callback(step: int, breakdown: LossBreakdown, output: torch.Tensor) -> None:
+            _broadcast_progress(
+                broadcast=broadcast,
+                job_id=job.id,
+                step=step,
+                total_steps=config.steps,
+                breakdown=breakdown,
             )
+            job.progress = step / config.steps if config.steps > 0 else 0.0
 
-            # Callback to update progress
-            def step_callback(step: int, loss: float, sim: float, latent: torch.Tensor) -> None:
-                job.progress = (step + 1) / DEFAULT_STEPS
-                if step % 5 == 0:
-                    msg = f"Step {step}"
-                    if loss != 0.0:
-                        msg += f": loss={loss:.4f}, sim={sim:.4f}"
-                        
-                    job.logs.append(msg)
-                    broadcast({
-                        "type": "progress", 
-                        "progress": job.progress, 
-                        "step": step, 
-                        "loss": loss, 
-                        "similarity": sim,
-                        "log": msg
-                    })
+        strategy = OptimizationStrategy()
 
-            # Select regularizers based on modality
-            # Manual configuration for stronger regularization on images
-            regs = CompositeRegularizer.default_image()
-            if job.output_modality == "image":
-                regs = CompositeRegularizer(
-                    regularizers=[
-                        TotalVariation(weight=0.25),      # Light smoothing (was 2.0 which killed everything)
-                        SpectralRegularizer(weight=0.01), # Standard anti-noise (was 0.1)
-                        LatentNorm(weight=0.5),           # Keep latents valid
-                    ]
+        # Wrap the strategy so the callback is injected automatically
+        class _StrategyWithCallback:
+            def render(self, target, generator, encoder, cfg):
+                return strategy.render(
+                    target,
+                    generator,
+                    encoder,
+                    cfg,
+                    callback=progress_callback,
                 )
-            elif job.output_modality == "audio":
-                regs = CompositeRegularizer.default_audio()
-            elif job.output_modality == "video":
-                regs = CompositeRegularizer.default_video()
 
-            result = engine.optimize(
-                target=target_concept,
+        # Compare job vs. single-encoder job
+        if job.compare_encoder_names:
+            results = engine.render_compare(
+                spec,
+                encoder_names=job.compare_encoder_names,
                 output_modality=job.output_modality,
                 config=config,
-                regularizers=regs,
-                callback=step_callback,
-                progress=False # Disable tqdm
             )
-            
-            # Save result
-            OUTPUTS_DIR = os.path.join(os.getcwd(), "outputs")
-            
-            # Determine extension based on modality
-            ext = "png"
-            if job.output_modality == "audio":
-                ext = "wav"
-            elif job.output_modality == "video":
-                ext = "mp4"
-                
-            filename = f"{job.id}.{ext}"
-            filepath = os.path.join(OUTPUTS_DIR, filename)
-            
-            # Get specific generator and save
-            if job.output_modality == "image":
-                image = result.get_final_image(engine.get_generator("image"))
-                image.save(filepath)
-            
-            elif job.output_modality == "audio":
-                sample_rate, audio_data = result.get_final_audio(engine.get_generator("audio"))
-                # audio_data is numpy array [samples]
-                sf.write(filepath, audio_data, sample_rate)
-                
-            elif job.output_modality == "video":
-                frames = result.get_final_video(engine.get_generator("video"))
-                # frames is list[PIL.Image]
-                # Convert to list of numpy arrays for export_to_video
-                frames_np = [np.array(f) for f in frames]
-                export_to_video(frames_np, filepath, fps=8)
-            
-            # Set relative URL for frontend
-            job.result_path = f"/outputs/{filename}"
-            job.logs.append(f"Saved result to {job.result_path}")
-            
-            # Final status update with result
-            job.status = JobStatus.COMPLETED
-            job.progress = 1.0
-            job.logs.append(f"Finished! Final similarity: {result.final_similarity:.4f}")
-            broadcast({"type": "status", "status": "completed"})
-            broadcast({"type": "progress", "progress": 1.0})
-            broadcast({"type": "log", "message": f"Finished! Final similarity: {result.final_similarity:.4f}"})
-            broadcast({"type": "result", "url": job.result_path})
-            broadcast({"type": "log", "message": f"Saved result to {job.result_path}"})
-            
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.error(f"Job failed: {e}")
-            job.status = JobStatus.FAILED
-            job.error = str(e)
-            job.logs.append(f"Error: {e}")
-            job.logs.append(f"Traceback:\n{tb}")
-            broadcast({"type": "status", "status": "failed"})
-            broadcast({"type": "error", "message": str(e)})
-            broadcast({"type": "log", "message": f"Error: {e}"})
-            broadcast({"type": "log", "message": "Check server logs for full traceback"})
+            # For compare jobs, save the first result as the primary output
+            first_result = next(iter(results.values()))
+            render_result = first_result
+        else:
+            render_result = engine.render(
+                spec,
+                encoder_name=job.encoder_name,
+                output_modality=job.output_modality,
+                strategy=_StrategyWithCallback(),
+                config=config,
+            )
+
+        # Save result
+        outputs_dir = os.path.join(os.getcwd(), "outputs")
+        os.makedirs(outputs_dir, exist_ok=True)
+
+        ext = "png"
+        if job.output_modality == "audio":
+            ext = "wav"
+        elif job.output_modality == "video":
+            ext = "mp4"
+
+        filename = f"{job.id}.{ext}"
+        filepath = os.path.join(outputs_dir, filename)
+
+        if job.output_modality == "image":
+            # result.output is already a decoded tensor [B, C, H, W]
+            image = to_pil_image(render_result.output.squeeze(0).clamp(0, 1))
+            image.save(filepath)
+
+        elif job.output_modality == "audio":
+            # Decode audio tensor — render_result.output shape [B, Samples]
+            audio_np = render_result.output.squeeze(0).cpu().numpy()
+            generator_instance = engine.get_generator("audio")
+            sample_rate = getattr(generator_instance, "SAMPLE_RATE", 16000)
+            sf.write(filepath, audio_np, sample_rate)
+
+        elif job.output_modality == "video":
+            # render_result.output shape [B, F, C, H, W]
+            frames_tensor = render_result.output.squeeze(0)  # [F, C, H, W]
+            frames = []
+            for frame in frames_tensor:
+                frames.append(to_pil_image(frame.clamp(0, 1)))
+            frames_np = [np.array(f) for f in frames]
+            export_to_video(frames_np, filepath, fps=8)
+
+        # Set relative URL for frontend
+        job.result_path = f"/outputs/{filename}"
+        job.logs.append(f"Saved result to {job.result_path}")
+
+        final_sim = render_result.final_similarity
+        job.status = JobStatus.COMPLETED
+        job.progress = 1.0
+        job.logs.append(f"Finished! Final similarity: {final_sim:.4f}")
+        broadcast({"type": "status", "status": "completed"})
+        broadcast({"type": "progress", "progress": 1.0})
+        broadcast({"type": "log", "message": f"Finished! Final similarity: {final_sim:.4f}"})
+        broadcast({"type": "result", "url": job.result_path})
+        broadcast({"type": "log", "message": f"Saved result to {job.result_path}"})
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"Job failed: {e}")
+        job.status = JobStatus.FAILED
+        job.error = str(e)
+        job.logs.append(f"Error: {e}")
+        job.logs.append(f"Traceback:\n{tb}")
+        broadcast({"type": "status", "status": "failed"})
+        broadcast({"type": "error", "message": str(e)})
+        broadcast({"type": "log", "message": f"Error: {e}"})
+        broadcast({"type": "log", "message": "Check server logs for full traceback"})
+
+
+def _broadcast_progress(
+    *,
+    broadcast: Callable[[dict], None],
+    job_id: str,
+    step: int,
+    total_steps: int,
+    breakdown: LossBreakdown,
+) -> None:
+    """Build and send a structured progress message with loss breakdown."""
+    progress = step / total_steps if total_steps > 0 else 0.0
+    components = {k: v.item() for k, v in breakdown.components.items()}
+    msg = f"Step {step}: loss={breakdown.total.item():.4f}"
+    broadcast(
+        {
+            "type": "progress",
+            "progress": progress,
+            "step": step,
+            "loss": breakdown.total.item(),
+            "components": components,
+            "log": msg,
+        }
+    )
+
 
 # Global instance
 job_manager = JobManager()
