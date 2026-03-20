@@ -252,23 +252,8 @@ class TestSigLIP2EncoderLayerFeatures:
         result = encoder.get_layer_features(image_tensor)
         indices = sorted(result.keys())
         max_idx = max(indices)
-        # The last index returned should equal n_layers - 1; we verify it by
-        # checking that there is no gap from max_idx to the theoretical end.
-        # We can't know n_layers without running forward pass — so just assert
-        # the last index in results matches what the model reports.
-        # The simplest check: re-run with output_hidden_states=True and compare.
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-        normalized = (image_tensor - mean) / std
-        import torch.nn.functional as F
-
-        if normalized.shape[-2:] != (384, 384):
-            normalized = F.interpolate(normalized, size=(384, 384), mode="bilinear", align_corners=False)
-        with torch.no_grad():
-            vision_out = encoder._model.vision_model(
-                pixel_values=normalized, output_hidden_states=True
-            )
-        n_layers = len(vision_out.hidden_states)
+        # The last index should equal the number of encoder layers - 1
+        n_layers = len(encoder._model.vision_model.encoder.layers)
         assert max_idx == n_layers - 1
 
     def test_layer_features_have_correct_batch_dim(

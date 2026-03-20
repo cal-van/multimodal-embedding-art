@@ -277,12 +277,23 @@ class SigLIP2Encoder:
                 align_corners=False,
             )
 
-        vision_outputs = self._model.vision_model(
-            pixel_values=normalized,
-            output_hidden_states=True,
-        )
+        # Use forward hooks to capture hidden states because some transformers
+        # versions don't wire output_hidden_states through SiglipEncoder properly.
+        captured_states: list[torch.Tensor] = []
+        hooks = []
+        for layer in self._model.vision_model.encoder.layers:
+            def _hook(module, input, output, states=captured_states):
+                out = output[0] if isinstance(output, tuple) else output
+                states.append(out)
+            hooks.append(layer.register_forward_hook(_hook))
 
-        hidden_states = vision_outputs.hidden_states  # tuple of [B, N_patches, D]
+        try:
+            self._model.vision_model(pixel_values=normalized)
+        finally:
+            for h in hooks:
+                h.remove()
+
+        hidden_states = captured_states
         n_layers = len(hidden_states)
 
         # Every 4th layer, always including the final one.

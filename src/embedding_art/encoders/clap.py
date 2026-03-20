@@ -172,7 +172,7 @@ class CLAPEncoder:
                 raise ValueError(f"Unsupported audio type: {type(audio)}")
 
             inputs = self._processor(
-                audios=waveform,
+                audio=waveform,
                 sampling_rate=sr,
                 return_tensors="pt",
             ).to(self._device)
