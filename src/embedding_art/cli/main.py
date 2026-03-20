@@ -23,6 +23,7 @@ from embedding_art.cli.commands.render import render
 from embedding_art.cli.commands.compare import compare as compare_cmd
 from embedding_art.cli.commands.decompose import decompose
 from embedding_art.cli.commands.sae import sae
+from embedding_art.cli.commands.interpolation import interpolate_v2
 
 
 @click.group()
@@ -69,6 +70,7 @@ cli.add_command(render)
 cli.add_command(compare_cmd, name="compare-encoders")
 cli.add_command(decompose)
 cli.add_command(sae)
+cli.add_command(interpolate_v2)
 
 
 if __name__ == "__main__":

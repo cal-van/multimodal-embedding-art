@@ -366,6 +366,14 @@ class EmbeddingArtEngine:
         Returns:
             OptimizationResult with final output and metadata
         """
+        import warnings
+
+        warnings.warn(
+            "EmbeddingArtEngine.optimize() is deprecated. Use engine.render() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         config = config or OptimizationConfig()
         generator = self.get_generator(output_modality)
 
