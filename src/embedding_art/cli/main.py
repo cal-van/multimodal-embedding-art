@@ -6,25 +6,25 @@ Usage:
     embed-art interpolate -a "goldfish" -b "flamingo" -s 10 -o image
 """
 
-import sys
 import click
 import yaml
 
-from embedding_art.core.config import load_config
-from embedding_art.cli.commands.optimize import optimize
-from embedding_art.cli.commands.interpolate import interpolate
-from embedding_art.cli.commands.grid import grid
-from embedding_art.cli.commands.embed import embed, compare
+from embedding_art.cli.commands.anchor_compare import anchor_compare
 from embedding_art.cli.commands.batch import batch
+from embedding_art.cli.commands.compare import compare as compare_cmd
+from embedding_art.cli.commands.decompose import decompose
+from embedding_art.cli.commands.embed import compare, embed
+from embedding_art.cli.commands.grid import grid
+from embedding_art.cli.commands.interpolate import interpolate
+from embedding_art.cli.commands.interpolation import interpolate_v2
+from embedding_art.cli.commands.optimize import optimize
+from embedding_art.cli.commands.render import render
+from embedding_art.cli.commands.sae import sae
+from embedding_art.cli.commands.showcase import showcase
 from embedding_art.cli.commands.upscale import upscale
 from embedding_art.cli.commands.visualize import visualize
 from embedding_art.cli.commands.web import web
-from embedding_art.cli.commands.render import render
-from embedding_art.cli.commands.compare import compare as compare_cmd
-from embedding_art.cli.commands.decompose import decompose
-from embedding_art.cli.commands.sae import sae
-from embedding_art.cli.commands.interpolation import interpolate_v2
-from embedding_art.cli.commands.showcase import showcase
+from embedding_art.core.config import load_config
 
 
 @click.group()
@@ -73,6 +73,7 @@ cli.add_command(decompose)
 cli.add_command(sae)
 cli.add_command(interpolate_v2)
 cli.add_command(showcase)
+cli.add_command(anchor_compare)
 
 
 if __name__ == "__main__":
