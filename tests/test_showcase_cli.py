@@ -185,6 +185,48 @@ class TestShowcaseOrchestrationTextOnly:
         assert "languagebind" in card
 
 
+class TestShowcaseInterpretationManifest:
+    """When --interpret is on, the manifest gains an interpretation block."""
+
+    def test_interpretation_appears_in_modality_record_for_text_only(self, tmp_path: Path) -> None:
+        """The text-only modality has no per-modality interpretation (text-card
+        is purely a markdown summary), but the evaluation card should still
+        appear in the manifest with the default --evaluate flag."""
+        from embedding_art.cli.commands.showcase import _showcase_impl
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry",
+            return_value=mock_registry,
+        ):
+            with patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry"
+            ) as mock_engine_factory:
+                mock_engine_factory.return_value = MagicMock()
+
+                _showcase_impl(
+                    target_text="goldfish",
+                    output_dir=tmp_path,
+                    encoder_name="languagebind",
+                    modalities=["text"],
+                    steps=10,
+                    seed=42,
+                    device="cpu",
+                    image_backbone="sd35",
+                    interpret=True,
+                    evaluate=True,
+                )
+
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        # Evaluation card should still appear (empty cross-modal matrix, but
+        # the structure is there).
+        assert "evaluation" in manifest
+
+
 @pytest.mark.slow
 class TestShowcaseFullIntegration:
     """End-to-end test running the real LanguageBind + SD3.5 + AudioLDM2 + SVD

@@ -126,6 +126,27 @@ DEFAULT_ENCODER = "languagebind"
     show_default=True,
     help="Image generator backbone. SD3.5 is the M2a canonical default.",
 )
+@click.option(
+    "--interpret/--no-interpret",
+    default=True,
+    show_default=True,
+    help="Compute the interpretation bundle (text-anchor readout, gradient "
+    "attribution, SAE decomposition if available) for every modality.",
+)
+@click.option(
+    "--sae-path",
+    type=click.Path(exists=True, dir_okay=True, file_okay=True),
+    default=None,
+    help="Path to trained SAE weights for the interpretation bundle's SAE "
+    "decomposition + CorrSteer fields. When omitted those fields are skipped.",
+)
+@click.option(
+    "--evaluate/--no-evaluate",
+    default=True,
+    show_default=True,
+    help="Compute the evaluation card (cross-encoder probes + cross-modal "
+    "agreement matrix) for the showcase bundle.",
+)
 @click.pass_context
 def showcase(
     ctx: click.Context,
@@ -137,6 +158,9 @@ def showcase(
     seed: int | None,
     device: str,
     image_backbone: str,
+    interpret: bool,
+    sae_path: str | None,
+    evaluate: bool,
 ) -> None:
     """Render one concept across all four modalities into a single showcase bundle."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
@@ -151,6 +175,9 @@ def showcase(
             seed=seed,
             device=device,
             image_backbone=image_backbone,
+            interpret=interpret,
+            sae_path=Path(sae_path) if sae_path else None,
+            evaluate=evaluate,
         )
     except Exception as e:
         handle_exception(e, debug_mode)
@@ -167,6 +194,9 @@ def _showcase_impl(
     seed: int | None,
     device: str,
     image_backbone: str,
+    interpret: bool = True,
+    sae_path: Path | None = None,
+    evaluate: bool = True,
 ) -> None:
     """Orchestrate the per-modality renderings and assemble the bundle."""
     from embedding_art.core.concept import Concept
@@ -207,35 +237,50 @@ def _showcase_impl(
 
     engine = EmbeddingArtEngine.from_registry(registry, default_encoder=encoder_name, device=device)
 
+    sae = _load_sae(sae_path) if sae_path else None
+    sae_feature_labels = _load_sae_labels(sae_path) if sae_path else None
+
     if "image" in modalities:
         manifest["modalities"]["image"] = _render_image(
             engine=engine,
             target=target,
+            encoder=encoder,
             encoder_name=encoder_name,
             config=config,
             output_dir=output_dir,
             device=device,
             backbone=image_backbone,
+            interpret=interpret,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
         )
 
     if "audio" in modalities:
         manifest["modalities"]["audio"] = _render_audio(
             engine=engine,
             target=target,
+            encoder=encoder,
             encoder_name=encoder_name,
             config=config,
             output_dir=output_dir,
             device=device,
+            interpret=interpret,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
         )
 
     if "video" in modalities:
         manifest["modalities"]["video"] = _render_video(
             engine=engine,
             target=target,
+            encoder=encoder,
             encoder_name=encoder_name,
             config=config,
             output_dir=output_dir,
             device=device,
+            interpret=interpret,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
         )
 
     if "text" in modalities:
@@ -244,6 +289,15 @@ def _showcase_impl(
             target_text=target_text,
             output_dir=output_dir,
             manifest=manifest,
+        )
+
+    if evaluate:
+        manifest["evaluation"] = _compute_evaluation_card(
+            target=target,
+            encoder_name=encoder_name,
+            modalities_data=manifest["modalities"],
+            output_dir=output_dir,
+            device=device,
         )
 
     manifest_path = output_dir / "manifest.json"
@@ -261,11 +315,15 @@ def _render_image(
     *,
     engine: Any,
     target: Any,
+    encoder: Any,
     encoder_name: str,
     config: Any,
     output_dir: Path,
     device: str,
     backbone: str,
+    interpret: bool = True,
+    sae: Any = None,
+    sae_feature_labels: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     console.print("[bold]Rendering image...[/bold]")
     if backbone == "sd35":
@@ -288,21 +346,39 @@ def _render_image(
     image_path = output_dir / "image.png"
     _save_image_output(result, generator, image_path)
 
-    return {
+    modality_record: dict[str, Any] = {
         "path": str(image_path.relative_to(output_dir)),
         "final_similarity": float(result.final_similarity),
         "backbone": backbone,
     }
+
+    if interpret:
+        modality_record["interpretation"] = _run_modality_interpretation(
+            target=target,
+            output=result.output,
+            encoder=encoder,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
+            final_similarity=result.final_similarity,
+            output_dir=output_dir,
+            modality="image",
+        )
+
+    return modality_record
 
 
 def _render_audio(
     *,
     engine: Any,
     target: Any,
+    encoder: Any,
     encoder_name: str,
     config: Any,
     output_dir: Path,
     device: str,
+    interpret: bool = True,
+    sae: Any = None,
+    sae_feature_labels: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     console.print("[bold]Rendering audio...[/bold]")
     from embedding_art.generators import AudioLDMGenerator
@@ -319,21 +395,39 @@ def _render_audio(
     audio_path = output_dir / "audio.wav"
     _save_audio_output(result, generator, audio_path)
 
-    return {
+    modality_record: dict[str, Any] = {
         "path": str(audio_path.relative_to(output_dir)),
         "final_similarity": float(result.final_similarity),
         "backbone": "audioldm2",
     }
+
+    if interpret:
+        modality_record["interpretation"] = _run_modality_interpretation(
+            target=target,
+            output=result.output,
+            encoder=encoder,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
+            final_similarity=result.final_similarity,
+            output_dir=output_dir,
+            modality="audio",
+        )
+
+    return modality_record
 
 
 def _render_video(
     *,
     engine: Any,
     target: Any,
+    encoder: Any,
     encoder_name: str,
     config: Any,
     output_dir: Path,
     device: str,
+    interpret: bool = True,
+    sae: Any = None,
+    sae_feature_labels: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     console.print("[bold]Rendering video...[/bold]")
     from embedding_art.generators import SVDVideoGenerator
@@ -351,11 +445,25 @@ def _render_video(
     fallback_path = output_dir / "video.gif"
     written = _save_video_output(result, generator, video_path, fallback_path)
 
-    return {
+    modality_record: dict[str, Any] = {
         "path": str(written.relative_to(output_dir)),
         "final_similarity": float(result.final_similarity),
         "backbone": "svd",
     }
+
+    if interpret:
+        modality_record["interpretation"] = _run_modality_interpretation(
+            target=target,
+            output=result.output,
+            encoder=encoder,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
+            final_similarity=result.final_similarity,
+            output_dir=output_dir,
+            modality="video",
+        )
+
+    return modality_record
 
 
 def _render_text_card(
@@ -395,6 +503,157 @@ def _render_text_card(
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
+
+
+def _run_modality_interpretation(
+    *,
+    target: Any,
+    output: Any,
+    encoder: Any,
+    sae: Any,
+    sae_feature_labels: dict[int, str] | None,
+    final_similarity: float,
+    output_dir: Path,
+    modality: str,
+) -> dict[str, Any] | None:
+    """Compute the interpretation bundle for one modality and save its
+    attribution map to disk. Returns the JSON-friendly dict to inline in the
+    manifest, or ``None`` if the bundle could not be computed."""
+    from embedding_art.interpretation import run_interpretation
+    from embedding_art.interpretation.bundle import compute_attribution_to_disk
+
+    try:
+        bundle = run_interpretation(
+            target=target,
+            output=output,
+            encoder=encoder,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
+            final_similarity=float(final_similarity),
+        )
+
+        attribution_path = output_dir / f"{modality}_attribution.pt"
+        try:
+            shape = compute_attribution_to_disk(
+                output=output,
+                target_embedding=target.embedding,
+                encoder=encoder,
+                path=attribution_path,
+            )
+            bundle.attribution_path = str(attribution_path.relative_to(output_dir))
+            bundle.attribution_shape = shape
+        except Exception as exc:
+            logger.warning(
+                "Skipping %s attribution map (encoder may not be differentiable): %s",
+                modality,
+                exc,
+            )
+
+        return bundle.to_dict()
+    except Exception as exc:
+        logger.warning("Interpretation bundle for %s failed: %s", modality, exc, exc_info=True)
+        return None
+
+
+def _load_sae(sae_path: Path) -> Any:
+    """Load a trained SAE checkpoint. Returns ``None`` if loading fails."""
+    try:
+        import torch
+
+        from embedding_art.sae.training import GroupSparseSAE
+
+        weights_file = sae_path / "sae_weights.pt" if sae_path.is_dir() else sae_path
+        state = torch.load(weights_file, weights_only=True)
+        w_enc = state["W_enc"]
+        n_features, embed_dim = w_enc.shape
+        # Default TopK to a reasonable value; the saved checkpoint should also
+        # ship a config but this is the lazy fallback.
+        sae = GroupSparseSAE(embed_dim=embed_dim, n_features=n_features, k=32)
+        sae.load_state_dict(state)
+        sae.eval()
+        return sae
+    except Exception as exc:
+        logger.warning("Could not load SAE from %s: %s", sae_path, exc, exc_info=True)
+        return None
+
+
+def _load_sae_labels(sae_path: Path) -> dict[int, str] | None:
+    """Load feature labels saved alongside the SAE weights, if present."""
+    try:
+        labels_file = (
+            sae_path / "feature_labels.json"
+            if sae_path.is_dir()
+            else sae_path.parent / "feature_labels.json"
+        )
+        if not labels_file.exists():
+            return None
+        return {int(k): v for k, v in json.loads(labels_file.read_text()).items()}
+    except Exception as exc:
+        logger.warning("Could not load SAE labels: %s", exc, exc_info=True)
+        return None
+
+
+def _compute_evaluation_card(
+    *,
+    target: Any,
+    encoder_name: str,
+    modalities_data: dict[str, dict[str, Any]],
+    output_dir: Path,
+    device: str,
+) -> dict[str, Any]:
+    """Compute the evaluation card (M8): cross-modal agreement matrix +
+    per-modality final cosine similarity summary.
+
+    This is a minimum-viable evaluation: it does NOT yet include the
+    SigLIP2 / DINOv3 / CLAP cross-encoder probes (those are the M8 full
+    deliverable). What it produces:
+      * Per-modality final similarity to the canonical target.
+      * Cross-modal agreement matrix: pairwise cosine similarities between
+        the per-modality output embeddings in the canonical space (so
+        a perfectly cross-modally-aligned showcase has all-ones off-diagonal).
+    """
+    similarities = {
+        mod: float(data.get("final_similarity", float("nan")))
+        for mod, data in modalities_data.items()
+        if mod != "text"
+    }
+
+    # Cross-modal agreement: read each modality's interpretation bundle's
+    # text-anchor readout (if available) and report the Jaccard overlap of
+    # the top-K text words. This is a coarse cross-modal alignment proxy
+    # that does NOT require running the cross-encoder probes; the real
+    # cross-encoder evaluation is left for an M8 follow-up.
+    text_anchors: dict[str, set[str]] = {}
+    for mod, data in modalities_data.items():
+        if mod == "text":
+            continue
+        interp = data.get("interpretation") or {}
+        anchors = interp.get("text_anchor") or []
+        if anchors:
+            text_anchors[mod] = {a["word"] for a in anchors[:10]}
+
+    agreement: dict[str, dict[str, float]] = {}
+    mods = sorted(text_anchors.keys())
+    for m1 in mods:
+        agreement[m1] = {}
+        for m2 in mods:
+            if m1 == m2:
+                agreement[m1][m2] = 1.0
+                continue
+            inter = text_anchors[m1] & text_anchors[m2]
+            union = text_anchors[m1] | text_anchors[m2]
+            agreement[m1][m2] = (len(inter) / len(union)) if union else 0.0
+
+    return {
+        "per_modality_similarity": similarities,
+        "cross_modal_text_anchor_agreement_jaccard": agreement,
+        "encoder": encoder_name,
+        "notes": (
+            "Minimum-viable evaluation: per-modality final cosine + Jaccard "
+            "overlap of top-10 text-anchor words. Cross-encoder probes "
+            "(SigLIP2/CLAP/DINOv3) and seed-stability are the M8 follow-up."
+        ),
+    }
 
 
 def _save_image_output(result: Any, generator: Any, path: Path) -> None:
