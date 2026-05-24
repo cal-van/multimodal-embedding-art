@@ -607,8 +607,10 @@ class LanguageBindEncoder:
         result: dict[int, LayerFeatures] = {}
         for idx in selected_indices:
             result[idx] = LayerFeatures(
-                layer_index=idx,
-                tokens=hidden_states[idx],
+                tensor=hidden_states[idx],
+                spatial=True,
+                shape_semantic="batch_tokens_dim",
+                layer_name=f"layer_{idx}",
             )
         return result
 
