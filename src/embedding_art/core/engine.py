@@ -326,6 +326,100 @@ class EmbeddingArtEngine:
 
         return results
 
+    # ------------------------------------------------------------------
+    # v3 direct rendering API
+    # ------------------------------------------------------------------
+
+    def _resolve_encoder(self, encoder_name: str | None = None) -> Any:
+        """Resolve an encoder by name (via registry) or fall back to self.encoder.
+
+        Args:
+            encoder_name: Optional name to look up in the registry.
+
+        Returns:
+            An encoder instance.
+
+        Raises:
+            ValueError: When no encoder is available.
+        """
+        if encoder_name is not None and hasattr(self, "_registry"):
+            return self._registry.load(encoder_name)
+        if self.encoder is not None:
+            return self.encoder
+        raise ValueError(
+            "No encoder available. Provide encoder_name or set a default encoder "
+            "via from_registry(default_encoder=...) or by passing encoder to __init__."
+        )
+
+    def render_direct(
+        self,
+        spec: Any,
+        renderer: Any,
+        encoder: str | None = None,
+    ) -> Any:
+        """Render a concept directly through a DirectRenderer (no optimization loop).
+
+        This is the v3 primary path: encode the concept, then decode the embedding
+        directly through a renderer in a single forward pass.
+        """
+        from embedding_art.core.concept_spec import ConceptSpec
+        from embedding_art.core.render_result import RenderResult
+
+        enc = self._resolve_encoder(encoder)
+        concept = enc.encode(spec)
+        return renderer.render(concept.embedding)
+
+    def render_state(
+        self,
+        spec: Any,
+        renderer: Any,
+        encoder: str | None = None,
+        layers: list[int] | None = None,
+    ) -> list[Any]:
+        """Render multi-layer encoder states for a concept.
+
+        Captures intermediate activations at each encoder layer and renders
+        them through the provided renderer, showing how the concept forms
+        through the network.
+        """
+        from embedding_art.probes import ActivationProbe, StateRenderer
+
+        enc = self._resolve_encoder(encoder)
+        concept = enc.encode(spec)
+        probe = ActivationProbe()
+        state = probe.capture_from_concept(enc, concept)
+
+        # Filter to requested layers if specified
+        if layers is not None:
+            state.layer_activations = {
+                k: v for k, v in state.layer_activations.items() if k in layers
+            }
+
+        sr = StateRenderer()
+        return sr.render_progression(state, renderer)
+
+    def render_features(
+        self,
+        spec: Any,
+        renderer: Any,
+        sae: Any,
+        encoder: str | None = None,
+        max_features: int = 10,
+    ) -> dict[str, Any]:
+        """Render individual SAE features of a concept.
+
+        Decomposes the concept's embedding through the SAE and renders
+        each active feature individually, showing what components make up
+        the concept according to the sparse autoencoder.
+        """
+        from embedding_art.sae import FeatureRenderer
+
+        enc = self._resolve_encoder(encoder)
+        concept = enc.encode(spec)
+        decomposition = sae.decompose(concept.embedding)
+        fr = FeatureRenderer()
+        return fr.render_decomposition(decomposition, sae, renderer, max_features)
+
     def register_generator(self, name: str, generator: Generator) -> None:
         """Register a generator for a modality."""
         self._generators[name] = generator
