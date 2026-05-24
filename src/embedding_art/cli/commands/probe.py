@@ -76,7 +76,9 @@ def probe(ctx, target_text, encoder, renderer, layers, output_dir):
 
         # Instantiate renderer — infer embed_dim from the encoder
         encoder_instance = registry.load(encoder_name, device=device)
-        embed_dim = encoder_instance.card.embedding_dim if hasattr(encoder_instance, "card") else 1024
+        embed_dim = (
+            encoder_instance.card.embedding_dim if hasattr(encoder_instance, "card") else 1024
+        )
         if renderer == "raw":
             from embedding_art.renderers.raw import RawDecoder
 
@@ -97,9 +99,7 @@ def probe(ctx, target_text, encoder, renderer, layers, output_dir):
         for i, result in enumerate(results):
             save_path = output_path / f"{desc}_layer_{i:03d}.png"
             with torch.no_grad():
-                img_array = (
-                    result.output[0].detach().cpu().permute(1, 2, 0).clamp(0, 1).numpy()
-                )
+                img_array = result.output[0].detach().cpu().permute(1, 2, 0).clamp(0, 1).numpy()
             img = Image.fromarray((img_array * 255).astype("uint8"))
             img.save(save_path)
 

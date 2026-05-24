@@ -48,7 +48,7 @@ def cli(ctx: click.Context, debug: bool, config: str | None) -> None:
     """Generate art by optimizing toward coordinates in multimodal embedding space."""
     # Ensure ctx.obj exists (it might be None)
     ctx.ensure_object(dict)
-    
+
     ctx.obj["debug"] = debug
 
     # Load config file

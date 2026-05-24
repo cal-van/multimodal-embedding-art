@@ -84,7 +84,9 @@ def feature_viz(ctx, target_text, encoder, renderer, sae_path, max_features, out
 
         # Infer embed_dim from encoder
         encoder_instance = registry.load(encoder_name, device=device)
-        embed_dim = encoder_instance.card.embedding_dim if hasattr(encoder_instance, "card") else 1024
+        embed_dim = (
+            encoder_instance.card.embedding_dim if hasattr(encoder_instance, "card") else 1024
+        )
 
         # Instantiate renderer
         if renderer == "raw":
@@ -123,9 +125,7 @@ def feature_viz(ctx, target_text, encoder, renderer, sae_path, max_features, out
             safe_name = name.replace(" ", "_").replace("/", "_")[:50]
             save_path = output_path / f"feature_{safe_name}.png"
             with torch.no_grad():
-                img_array = (
-                    result.output[0].detach().cpu().permute(1, 2, 0).clamp(0, 1).numpy()
-                )
+                img_array = result.output[0].detach().cpu().permute(1, 2, 0).clamp(0, 1).numpy()
             img = Image.fromarray((img_array * 255).astype("uint8"))
             img.save(save_path)
 

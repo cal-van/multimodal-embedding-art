@@ -16,11 +16,9 @@ from embedding_art.core.concept import Concept
 from embedding_art.core.concept_spec import ConceptSpec
 from embedding_art.core.engine import EmbeddingArtEngine
 from embedding_art.core.render_result import OptimizationHistory, RenderResult
-from embedding_art.probes.activation_probe import ModelState
 from embedding_art.sae.lens import SAEDecomposition
 
 from tests.conftest import MockEncoder
-
 
 # ---------------------------------------------------------------------------
 # Mock helpers

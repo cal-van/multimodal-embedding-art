@@ -63,8 +63,6 @@ def direct(ctx, target_text, renderer, encoder, embed_dim, output_shape, output_
         from PIL import Image
 
         from embedding_art.core.concept import Concept
-        from embedding_art.core.concept_spec import ConceptSpec
-        from embedding_art.core.engine import EmbeddingArtEngine
         from embedding_art.encoders.defaults import create_default_registry
 
         device = loaded_config.get("device", "mps")
@@ -72,9 +70,6 @@ def direct(ctx, target_text, renderer, encoder, embed_dim, output_shape, output_
 
         console.print("[bold]Loading encoder...[/bold]")
         registry = create_default_registry()
-        engine = EmbeddingArtEngine.from_registry(
-            registry, default_encoder=encoder_name, device=device
-        )
 
         # Build concept — combine weighted concepts if multiple targets given
         encoder_instance = registry.load(encoder_name, device=device)
@@ -96,9 +91,7 @@ def direct(ctx, target_text, renderer, encoder, embed_dim, output_shape, output_
         if renderer == "raw":
             from embedding_art.renderers.raw import RawDecoder
 
-            renderer_instance = RawDecoder(
-                embed_dim=embed_dim, output_shape=shape, device=device
-            )
+            renderer_instance = RawDecoder(embed_dim=embed_dim, output_shape=shape, device=device)
         elif renderer == "projection":
             from embedding_art.generators import SDXLImageGenerator
             from embedding_art.renderers.projection import ProjectionDecoder
