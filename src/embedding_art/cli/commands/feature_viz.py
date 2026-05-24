@@ -82,18 +82,22 @@ def feature_viz(ctx, target_text, encoder, renderer, sae_path, max_features, out
         # Load SAE
         sae = SAELens(encoder_name=encoder_name, artifact_path=Path(sae_path))
 
+        # Infer embed_dim from encoder
+        encoder_instance = registry.load(encoder_name, device=device)
+        embed_dim = encoder_instance.card.embedding_dim if hasattr(encoder_instance, "card") else 1024
+
         # Instantiate renderer
         if renderer == "raw":
             from embedding_art.renderers.raw import RawDecoder
 
-            renderer_instance = RawDecoder(embed_dim=1024, device=device)
+            renderer_instance = RawDecoder(embed_dim=embed_dim, device=device)
         elif renderer == "projection":
             from embedding_art.generators import SDXLImageGenerator
             from embedding_art.renderers.projection import ProjectionDecoder
 
             generator = SDXLImageGenerator(device=device)
             renderer_instance = ProjectionDecoder(
-                embed_dim=1024, generator=generator, device=device
+                embed_dim=embed_dim, generator=generator, device=device
             )
         elif renderer == "ip-adapter":
             from embedding_art.renderers.ip_adapter import IPAdapterRenderer

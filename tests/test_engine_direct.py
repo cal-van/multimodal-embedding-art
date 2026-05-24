@@ -131,6 +131,13 @@ class TestResolveEncoder:
 
 
 class TestRenderDirect:
+    def test_render_direct_accepts_concept(self, engine, renderer, mock_enc):
+        """Concept objects pass through without re-encoding."""
+        embedding = F.normalize(torch.randn(1, 1024), dim=-1)
+        concept = Concept(embedding=embedding, description="test concept")
+        result = engine.render_direct(concept, renderer)
+        assert isinstance(result, RenderResult)
+
     def test_render_direct_calls_renderer(self, engine, renderer, spec):
         """Verifies renderer.render() is called with concept embedding."""
         result = engine.render_direct(spec, renderer)

@@ -312,6 +312,38 @@ class TestTextRendererReturnsRenderResult:
         assert isinstance(result, RenderResult)
 
 
+class TestTextRenderResultFields:
+    def test_descriptions_populated(self) -> None:
+        encoder = MockEncoder()
+        vocab = ["cat", "dog", "bird"]
+        renderer = TextRenderer(encoder=encoder, vocabulary=vocab)
+        embedding = encoder.encode_text("cat")
+        result = renderer.render(embedding, k=3)
+        assert hasattr(result, "descriptions")
+        assert len(result.descriptions) == 3
+        assert all(isinstance(d, str) for d in result.descriptions)
+        assert all(d in vocab for d in result.descriptions)
+
+    def test_scores_populated(self) -> None:
+        encoder = MockEncoder()
+        vocab = ["cat", "dog", "bird"]
+        renderer = TextRenderer(encoder=encoder, vocabulary=vocab)
+        embedding = encoder.encode_text("cat")
+        result = renderer.render(embedding, k=3)
+        assert hasattr(result, "scores")
+        assert len(result.scores) == 3
+        assert all(isinstance(s, float) for s in result.scores)
+
+    def test_scores_sorted_descending(self) -> None:
+        encoder = MockEncoder()
+        vocab = ["cat", "dog", "bird", "fish", "tree"]
+        renderer = TextRenderer(encoder=encoder, vocabulary=vocab)
+        embedding = encoder.encode_text("cat")
+        result = renderer.render(embedding, k=5)
+        for i in range(len(result.scores) - 1):
+            assert result.scores[i] >= result.scores[i + 1]
+
+
 # =============================================================================
 # DirectRenderer Protocol Compliance
 # =============================================================================

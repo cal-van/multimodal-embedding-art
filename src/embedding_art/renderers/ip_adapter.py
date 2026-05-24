@@ -77,5 +77,5 @@ class IPAdapterRenderer:
             self._pipeline = None
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 torch.mps.empty_cache()
