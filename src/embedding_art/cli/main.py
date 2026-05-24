@@ -24,6 +24,7 @@ from embedding_art.cli.commands.compare import compare as compare_cmd
 from embedding_art.cli.commands.decompose import decompose
 from embedding_art.cli.commands.sae import sae
 from embedding_art.cli.commands.interpolation import interpolate_v2
+from embedding_art.cli.commands.showcase import showcase
 
 
 @click.group()
@@ -45,7 +46,7 @@ def cli(ctx: click.Context, debug: bool, config: str | None) -> None:
     """Generate art by optimizing toward coordinates in multimodal embedding space."""
     # Ensure ctx.obj exists (it might be None)
     ctx.ensure_object(dict)
-    
+
     ctx.obj["debug"] = debug
 
     # Load config file
@@ -71,6 +72,7 @@ cli.add_command(compare_cmd, name="compare-encoders")
 cli.add_command(decompose)
 cli.add_command(sae)
 cli.add_command(interpolate_v2)
+cli.add_command(showcase)
 
 
 if __name__ == "__main__":
