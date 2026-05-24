@@ -229,32 +229,43 @@ Decodes embeddings to text using nearest-neighbor search against a precomputed
 text embedding index. Returns the closest text descriptions.
 
 ```python
+class TextRenderResult(RenderResult):
+    """RenderResult extended with matched text descriptions."""
+    descriptions: list[str]  # matched vocabulary words
+    scores: list[float]      # cosine similarity scores
+
 class TextRenderer(DirectRenderer):
     """Decode embedding to text via nearest-neighbor in text embedding space."""
 
-    def __init__(self, encoder, vocabulary: list[str]):
-        # Precompute text embeddings for vocabulary
+    def __init__(self, encoder, vocabulary: list[str] | None = None):
+        # Precompute text embeddings for vocabulary (default: 200 diverse concepts)
         ...
 
-    def render(self, embedding: Tensor, k: int = 5) -> RenderResult:
+    def render(self, embedding: Tensor, k: int = 5) -> TextRenderResult:
         # Find k nearest text embeddings
-        # Return as concatenated description
+        # Return TextRenderResult with descriptions and scores populated
         ...
 ```
 
 #### 6. `probes/activation_probe.py` — ActivationProbe
 
-Hook-based capture of intermediate activations from any encoder.
+Captures intermediate activations from any encoder supporting `get_layer_features()`.
 
 ```python
 class ActivationProbe:
     """Capture intermediate activations from encoder layers."""
 
-    def capture(self, encoder, input_tensor: Tensor,
-                layers: list[int] | None = None) -> ModelState:
-        # Register forward hooks on specified layers
-        # Run forward pass
-        # Collect and return activations
+    def capture_from_concept(self, encoder, concept: Concept) -> ModelState:
+        # Uses concept.source_input + get_layer_features() if available
+        # Falls back to final embedding only for text concepts
+        ...
+
+    def capture_from_spec(self, encoder, spec: ConceptSpec) -> ModelState:
+        # Encodes spec and captures all intermediate states
+        ...
+
+    def capture_from_tensor(self, encoder, tensor: Tensor) -> ModelState:
+        # Direct tensor capture
         ...
 
 @dataclass
@@ -263,6 +274,7 @@ class ModelState:
     final_embedding: Tensor
     encoder_name: str
     input_description: str
+    layer_names: dict[int, str] | None = None
 ```
 
 #### 7. `probes/state_renderer.py` — StateRenderer
@@ -292,11 +304,10 @@ class FeatureRenderer:
     """Render individual SAE features as visual/audio outputs."""
 
     def render_feature(self, sae: SAELens, feature_idx: int,
-                       activation: float,
-                       renderer: DirectRenderer) -> RenderResult:
-        # Create embedding from single feature direction
-        direction = sae._W_dec[:, feature_idx]  # decoder column = feature direction
-        embedding = F.normalize(direction.unsqueeze(0)) * activation
+                       renderer: Any, activation: float = 1.0) -> RenderResult:
+        # Uses sae.feature_direction() public API
+        direction = sae.feature_direction(feature_idx)
+        embedding = F.normalize(direction, dim=-1) * activation
         return renderer.render(embedding)
 
     def render_decomposition(self, decomposition: SAEDecomposition,
@@ -322,40 +333,41 @@ class EmbeddingArtEngine:
 
     def render_direct(
         self,
-        spec: ConceptSpec,
+        spec: ConceptSpec | Concept,  # accepts both
         renderer: DirectRenderer,
         encoder: str | None = None,
     ) -> RenderResult:
-        """Render a concept directly through a DirectRenderer (no optimization)."""
-        enc = self._resolve_encoder(encoder)
-        concept = enc.encode(spec)
+        """Render a concept directly (no optimization). Accepts Concept or ConceptSpec."""
+        concept = self._resolve_concept(spec, encoder)  # pass-through if already Concept
         return renderer.render(concept.embedding)
 
     def render_state(
         self,
-        spec: ConceptSpec,
+        spec: ConceptSpec | Concept,
         renderer: DirectRenderer,
         encoder: str | None = None,
         layers: list[int] | None = None,
     ) -> list[RenderResult]:
         """Render multi-layer states of encoding a concept."""
+        concept = self._resolve_concept(spec, encoder)
         enc = self._resolve_encoder(encoder)
         probe = ActivationProbe()
-        state = probe.capture(enc, spec)
+        state = probe.capture_from_concept(enc, concept)
+        if layers is not None:
+            state.layer_activations = {k: v for k, v in state.layer_activations.items() if k in layers}
         sr = StateRenderer()
         return sr.render_progression(state, renderer)
 
     def render_features(
         self,
-        spec: ConceptSpec,
+        spec: ConceptSpec | Concept,
         renderer: DirectRenderer,
         sae: SAELens,
         encoder: str | None = None,
         max_features: int = 10,
     ) -> dict[str, RenderResult]:
         """Render individual SAE features of a concept."""
-        enc = self._resolve_encoder(encoder)
-        concept = enc.encode(spec)
+        concept = self._resolve_concept(spec, encoder)
         decomposition = sae.decompose(concept.embedding)
         fr = FeatureRenderer()
         return fr.render_decomposition(decomposition, sae, renderer, max_features)
