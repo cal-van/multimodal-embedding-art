@@ -510,3 +510,184 @@ class TestConceptRepr:
         repr_str = repr(concept)
 
         assert "device=" in repr_str
+
+
+# ---------------------------------------------------------------------------
+# Concept-as-decomposition tests (v3 aggressive-rewrite addition)
+# ---------------------------------------------------------------------------
+
+
+def _toy_sae(embed_dim: int = 4, n_features: int = 6, k: int = 2):
+    """Build a tiny deterministic SAELens for tests.
+
+    The toy SAE has identity-style behaviour: the first ``embed_dim`` columns
+    of W_dec are unit vectors so reconstruct(features) ≈ features (truncated).
+    """
+    from embedding_art.sae.lens import SAELens
+
+    W_enc = torch.eye(n_features, embed_dim)  # noqa: N806
+    W_dec = torch.eye(embed_dim, n_features)  # noqa: N806
+    bias = torch.zeros(n_features)
+    pre_bias = torch.zeros(embed_dim)
+    vocab = [f"feat_{i}" for i in range(n_features)]
+    return SAELens.from_tensors(
+        W_enc=W_enc, W_dec=W_dec, bias=bias, pre_bias=pre_bias, vocab=vocab, k=k
+    )
+
+
+class TestConceptHasDecomposition:
+    """``has_decomposition`` reflects whether an SAE annotation is attached."""
+
+    def test_default_concept_has_no_decomposition(self) -> None:
+        concept = Concept(embedding=torch.tensor([[1.0, 0.0, 0.0, 0.0]]))
+        assert concept.has_decomposition is False
+        assert concept.decomposition is None
+
+    def test_concept_with_decomposition_reports_true(self) -> None:
+        sae = _toy_sae()
+        concept = Concept.from_features(sae, {"feat_0": 1.0, "feat_1": 0.5})
+        assert concept.has_decomposition is True
+        assert concept.decomposition is not None
+
+
+class TestConceptFromDecomposition:
+    """``from_decomposition`` builds a concept whose embedding is derived from
+    the SAE reconstruction."""
+
+    def test_from_decomposition_carries_decomposition(self) -> None:
+        sae = _toy_sae()
+        from embedding_art.sae.lens import SAEDecomposition
+
+        acts = torch.zeros(1, 6)
+        acts[0, 0] = 1.0
+        acts[0, 1] = 0.5
+        decomp = SAEDecomposition(
+            activations=acts,
+            active_features={"feat_0": 1.0, "feat_1": 0.5},
+            reconstruction_error=0.0,
+        )
+        concept = Concept.from_decomposition(decomp, sae, description="test")
+        assert concept.has_decomposition is True
+        assert concept.description == "test"
+
+    def test_from_decomposition_embedding_is_normalized(self) -> None:
+        sae = _toy_sae()
+        from embedding_art.sae.lens import SAEDecomposition
+
+        acts = torch.zeros(1, 6)
+        acts[0, 0] = 3.0
+        acts[0, 1] = 4.0
+        decomp = SAEDecomposition(activations=acts, active_features={}, reconstruction_error=0.0)
+        concept = Concept.from_decomposition(decomp, sae)
+        norm = torch.norm(concept.embedding, dim=-1)
+        assert torch.allclose(norm, torch.tensor([1.0]), atol=1e-5)
+
+
+class TestConceptWithDecomposition:
+    """``with_decomposition`` adds an SAE annotation without changing the
+    embedding."""
+
+    def test_with_decomposition_preserves_embedding(self) -> None:
+        sae = _toy_sae()
+        concept = Concept(embedding=torch.tensor([[1.0, 0.0, 0.0, 0.0]]))
+        decomp = concept.decompose(sae)
+        annotated = concept.with_decomposition(decomp)
+        assert torch.allclose(annotated.embedding, concept.embedding)
+
+    def test_with_decomposition_adds_decomposition(self) -> None:
+        sae = _toy_sae()
+        concept = Concept(embedding=torch.tensor([[1.0, 0.0, 0.0, 0.0]]))
+        decomp = concept.decompose(sae)
+        annotated = concept.with_decomposition(decomp)
+        assert annotated.has_decomposition is True
+
+
+class TestConceptFeatureSpaceArithmetic:
+    """Arithmetic composes decompositions when both operands have them."""
+
+    def test_addition_composes_decompositions(self) -> None:
+        sae = _toy_sae()
+        a = Concept.from_features(sae, {"feat_0": 1.0})
+        b = Concept.from_features(sae, {"feat_1": 1.0})
+        result = a + b
+        assert result.has_decomposition is True
+        # feat_0 and feat_1 should both be active in the sum
+        assert "feat_0" in result.decomposition.active_features
+        assert "feat_1" in result.decomposition.active_features
+
+    def test_addition_without_decomposition_does_not_synthesize_one(self) -> None:
+        a = Concept(embedding=torch.tensor([[1.0, 0.0, 0.0, 0.0]]))
+        b = Concept(embedding=torch.tensor([[0.0, 1.0, 0.0, 0.0]]))
+        result = a + b
+        assert result.has_decomposition is False
+
+    def test_mixed_addition_drops_decomposition(self) -> None:
+        """When only one operand has a decomposition, the result has none."""
+        sae = _toy_sae()
+        a = Concept.from_features(sae, {"feat_0": 1.0})
+        b = Concept(embedding=torch.tensor([[0.0, 1.0, 0.0, 0.0]]))
+        result = a + b
+        assert result.has_decomposition is False
+
+    def test_subtraction_composes_decompositions(self) -> None:
+        sae = _toy_sae(n_features=6, k=4)
+        a = Concept.from_features(sae, {"feat_0": 1.0, "feat_1": 1.0})
+        b = Concept.from_features(sae, {"feat_1": 1.0})
+        result = a - b
+        assert result.has_decomposition is True
+
+    def test_scalar_multiplication_scales_decomposition(self) -> None:
+        sae = _toy_sae()
+        concept = Concept.from_features(sae, {"feat_0": 1.0, "feat_1": 0.5})
+        scaled = 2.0 * concept
+        assert scaled.has_decomposition is True
+        # Scaled activations should be doubled.
+        feats = scaled.decomposition.active_features
+        assert feats.get("feat_0", 0) > 1.5  # ~2.0
+        assert feats.get("feat_1", 0) > 0.5  # ~1.0
+
+    def test_negation_drops_decomposition(self) -> None:
+        """SAE activations are post-ReLU and can't be meaningfully negated."""
+        sae = _toy_sae()
+        concept = Concept.from_features(sae, {"feat_0": 1.0})
+        negated = -concept
+        assert negated.has_decomposition is False
+
+
+class TestConceptSlerpWithDecomposition:
+    """slerp interpolates decompositions in feature space when both operands
+    have them."""
+
+    def test_slerp_carries_decomposition(self) -> None:
+        sae = _toy_sae()
+        a = Concept.from_features(sae, {"feat_0": 1.0})
+        b = Concept.from_features(sae, {"feat_1": 1.0})
+        mid = Concept.slerp(a, b, t=0.5)
+        assert mid.has_decomposition is True
+
+
+class TestConceptSaveLoadWithDecomposition:
+    """save / load roundtrips preserve the decomposition annotation."""
+
+    def test_save_load_preserves_decomposition(self) -> None:
+        sae = _toy_sae()
+        concept = Concept.from_features(sae, {"feat_0": 1.0, "feat_1": 0.5})
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as fh:
+            path = Path(fh.name)
+        try:
+            concept.save(path)
+            loaded = Concept.load(path)
+            assert loaded.has_decomposition is True
+            assert "feat_0" in loaded.decomposition.active_features
+        finally:
+            path.unlink(missing_ok=True)
+
+
+class TestConceptReprWithDecomposition:
+    """``__repr__`` mentions the feature count when a decomposition is present."""
+
+    def test_repr_mentions_features_when_decomposition_present(self) -> None:
+        sae = _toy_sae()
+        concept = Concept.from_features(sae, {"feat_0": 1.0, "feat_1": 0.5})
+        repr_str = repr(concept)
+        assert "features=" in repr_str
