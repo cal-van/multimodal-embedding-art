@@ -242,6 +242,16 @@ class SAELens:
         """Feature names in index order."""
         return list(self._vocab)
 
+    def feature_direction(self, feature_idx: int) -> torch.Tensor:
+        """Return the decoder direction for a feature as a [1, embed_dim] tensor."""
+        return self._W_dec[:, feature_idx].unsqueeze(0)
+
+    def feature_index(self, name: str) -> int:
+        """Return the index of a named feature, or raise FeatureNotFoundError."""
+        if name not in self._vocab_to_idx:
+            raise FeatureNotFoundError(name, list(self._vocab_to_idx.keys()))
+        return self._vocab_to_idx[name]
+
     # ------------------------------------------------------------------
     # Core operations
     # ------------------------------------------------------------------

@@ -7,7 +7,17 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from dataclasses import dataclass, field
+
 from embedding_art.core.render_result import OptimizationHistory, RenderResult
+
+
+@dataclass
+class TextRenderResult(RenderResult):
+    """RenderResult extended with matched text descriptions."""
+
+    descriptions: list[str] = field(default_factory=list)
+    scores: list[float] = field(default_factory=list)
 
 DEFAULT_VOCABULARY = [
     # Animals
@@ -26,7 +36,7 @@ DEFAULT_VOCABULARY = [
     "apple", "banana", "orange", "strawberry", "pizza", "bread", "cake", "chocolate",
     "coffee", "wine", "cheese", "sushi", "pasta", "ice cream", "honey",
     # Colors and visual
-    "red", "blue", "green", "yellow", "purple", "orange", "pink", "black", "white", "gold",
+    "red", "blue", "green", "yellow", "purple", "magenta", "pink", "black", "white", "gold",
     "silver", "bronze", "turquoise", "crimson", "indigo",
     # Textures and materials
     "wood", "metal", "glass", "stone", "silk", "velvet", "leather", "marble", "crystal",
@@ -95,11 +105,13 @@ class TextRenderer:
         top_scores = top_k.values
         descriptions = [self._vocab[i] for i in top_indices]
         history = OptimizationHistory()
-        return RenderResult(
+        return TextRenderResult(
             output=top_scores.unsqueeze(0),
             history=history,
             encoder_name="text_nn",
             final_similarity=float(top_scores[0]),
             config=None,
             checkpoints=None,
+            descriptions=descriptions,
+            scores=[float(s) for s in top_scores],
         )

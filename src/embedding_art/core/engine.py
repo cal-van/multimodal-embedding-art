@@ -351,6 +351,18 @@ class EmbeddingArtEngine:
             "via from_registry(default_encoder=...) or by passing encoder to __init__."
         )
 
+    def _resolve_concept(self, spec_or_concept: Any, encoder: str | None = None) -> Any:
+        """Resolve a ConceptSpec or Concept into a Concept.
+
+        If already a Concept, return as-is. Otherwise encode via the specified encoder.
+        """
+        from embedding_art.core.concept import Concept
+
+        if isinstance(spec_or_concept, Concept):
+            return spec_or_concept
+        enc = self._resolve_encoder(encoder)
+        return enc.encode(spec_or_concept)
+
     def render_direct(
         self,
         spec: Any,
@@ -359,14 +371,9 @@ class EmbeddingArtEngine:
     ) -> Any:
         """Render a concept directly through a DirectRenderer (no optimization loop).
 
-        This is the v3 primary path: encode the concept, then decode the embedding
-        directly through a renderer in a single forward pass.
+        Accepts both ConceptSpec (will be encoded) and Concept (used directly).
         """
-        from embedding_art.core.concept_spec import ConceptSpec
-        from embedding_art.core.render_result import RenderResult
-
-        enc = self._resolve_encoder(encoder)
-        concept = enc.encode(spec)
+        concept = self._resolve_concept(spec, encoder)
         return renderer.render(concept.embedding)
 
     def render_state(
@@ -384,12 +391,11 @@ class EmbeddingArtEngine:
         """
         from embedding_art.probes import ActivationProbe, StateRenderer
 
+        concept = self._resolve_concept(spec, encoder)
         enc = self._resolve_encoder(encoder)
-        concept = enc.encode(spec)
         probe = ActivationProbe()
         state = probe.capture_from_concept(enc, concept)
 
-        # Filter to requested layers if specified
         if layers is not None:
             state.layer_activations = {
                 k: v for k, v in state.layer_activations.items() if k in layers
@@ -408,14 +414,11 @@ class EmbeddingArtEngine:
     ) -> dict[str, Any]:
         """Render individual SAE features of a concept.
 
-        Decomposes the concept's embedding through the SAE and renders
-        each active feature individually, showing what components make up
-        the concept according to the sparse autoencoder.
+        Accepts both ConceptSpec (will be encoded) and Concept (used directly).
         """
         from embedding_art.sae import FeatureRenderer
 
-        enc = self._resolve_encoder(encoder)
-        concept = enc.encode(spec)
+        concept = self._resolve_concept(spec, encoder)
         decomposition = sae.decompose(concept.embedding)
         fr = FeatureRenderer()
         return fr.render_decomposition(decomposition, sae, renderer, max_features)

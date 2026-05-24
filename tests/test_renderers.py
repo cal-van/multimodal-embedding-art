@@ -22,8 +22,7 @@ from embedding_art.renderers.projection import ProjectionDecoder
 from embedding_art.renderers.raw import RawDecoder
 from embedding_art.renderers.text import DEFAULT_VOCABULARY, TextRenderer
 
-# Import conftest mocks
-from conftest import MockEncoder, MockGenerator
+from tests.conftest import MockEncoder, MockGenerator
 
 
 # =============================================================================

@@ -52,6 +52,8 @@ class ProjectionDecoder:
     def render(self, embedding: torch.Tensor, **kwargs: Any) -> RenderResult:
         embedding = embedding.to(self._device)
         if embedding.dim() == 2:
+            if embedding.shape[0] != 1:
+                raise ValueError(f"Expected single embedding, got batch of {embedding.shape[0]}")
             embedding = embedding.squeeze(0)
         flat_latent = self._mlp(embedding)
         latent = flat_latent.reshape(self._latent_shape)

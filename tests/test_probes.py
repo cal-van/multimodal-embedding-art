@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import torch
-import torch.nn.functional as F
 import pytest
+import torch
 
 from embedding_art.core.concept import Concept
 from embedding_art.core.concept_spec import ConceptSpec
@@ -84,7 +83,7 @@ class MockRenderer:
 class TestModelState:
     def test_model_state_creation(self):
         """Basic dataclass construction."""
-        embedding = F.normalize(torch.randn(1, 1024), dim=-1)
+        embedding = torch.nn.functional.normalize(torch.randn(1, 1024), dim=-1)
         activations = {0: torch.randn(1, 16), 2: torch.randn(1, 32)}
         state = ModelState(
             layer_activations=activations,

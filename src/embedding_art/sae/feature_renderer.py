@@ -31,8 +31,8 @@ class FeatureRenderer:
         Returns a [1, embed_dim] tensor -- the decoder column for this feature,
         normalized to unit length.
         """
-        direction = sae._W_dec[:, feature_idx]  # [embed_dim]
-        return F.normalize(direction.unsqueeze(0), dim=-1)
+        direction = sae.feature_direction(feature_idx)
+        return F.normalize(direction, dim=-1)
 
     def render_feature(
         self,
@@ -58,9 +58,7 @@ class FeatureRenderer:
         activation: float = 1.0,
     ) -> RenderResult:
         """Render a named feature. Raises FeatureNotFoundError if not in vocab."""
-        if feature_name not in sae._vocab_to_idx:
-            raise FeatureNotFoundError(feature_name, list(sae._vocab_to_idx.keys()))
-        feature_idx = sae._vocab_to_idx[feature_name]
+        feature_idx = sae.feature_index(feature_name)
         return self.render_feature(sae, feature_idx, renderer, activation=activation)
 
     def render_decomposition(

@@ -75,4 +75,7 @@ class IPAdapterRenderer:
         if self._pipeline is not None:
             del self._pipeline
             self._pipeline = None
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                torch.mps.empty_cache()

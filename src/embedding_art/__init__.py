@@ -48,6 +48,27 @@ from embedding_art.core import (
 )
 from embedding_art.regularizers import CompositeRegularizer
 
+try:
+    from embedding_art.renderers import (
+        DirectRenderer,
+        IPAdapterRenderer,
+        ProjectionDecoder,
+        RawDecoder,
+        TextRenderer,
+    )
+except ImportError:  # pragma: no cover
+    pass
+
+try:
+    from embedding_art.probes import ActivationProbe, ModelState, StateRenderer
+except ImportError:  # pragma: no cover
+    pass
+
+try:
+    from embedding_art.sae import FeatureRenderer
+except ImportError:  # pragma: no cover
+    pass
+
 __version__ = "0.2.0"
 
 __all__ = [
@@ -69,6 +90,18 @@ __all__ = [
     "DiffusionGuidanceStrategy",
     # Regularizers
     "CompositeRegularizer",
+    # Renderers
+    "DirectRenderer",
+    "RawDecoder",
+    "ProjectionDecoder",
+    "IPAdapterRenderer",
+    "TextRenderer",
+    # Probes
+    "ActivationProbe",
+    "ModelState",
+    "StateRenderer",
+    # SAE
+    "FeatureRenderer",
     # Upscalers
     "upscalers",
 ]

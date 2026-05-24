@@ -74,11 +74,13 @@ def probe(ctx, target_text, encoder, renderer, layers, output_dir):
         if layers is not None:
             layer_list = [int(x.strip()) for x in layers.split(",")]
 
-        # Instantiate renderer
+        # Instantiate renderer — infer embed_dim from the encoder
+        encoder_instance = registry.load(encoder_name, device=device)
+        embed_dim = encoder_instance.card.embedding_dim if hasattr(encoder_instance, "card") else 1024
         if renderer == "raw":
             from embedding_art.renderers.raw import RawDecoder
 
-            renderer_instance = RawDecoder(embed_dim=1024, device=device)
+            renderer_instance = RawDecoder(embed_dim=embed_dim, device=device)
         else:
             raise click.UsageError(f"Unknown renderer: {renderer}")
 

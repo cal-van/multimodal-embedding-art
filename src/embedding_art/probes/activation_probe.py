@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 
 from embedding_art.core.concept import Concept
 from embedding_art.core.concept_spec import ConceptSpec

@@ -24,6 +24,9 @@ from embedding_art.cli.commands.compare import compare as compare_cmd
 from embedding_art.cli.commands.decompose import decompose
 from embedding_art.cli.commands.sae import sae
 from embedding_art.cli.commands.interpolation import interpolate_v2
+from embedding_art.cli.commands.direct import direct
+from embedding_art.cli.commands.probe import probe
+from embedding_art.cli.commands.feature_viz import feature_viz
 
 
 @click.group()
@@ -71,6 +74,9 @@ cli.add_command(compare_cmd, name="compare-encoders")
 cli.add_command(decompose)
 cli.add_command(sae)
 cli.add_command(interpolate_v2)
+cli.add_command(direct)
+cli.add_command(probe)
+cli.add_command(feature_viz)
 
 
 if __name__ == "__main__":
