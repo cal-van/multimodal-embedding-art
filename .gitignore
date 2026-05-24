@@ -37,18 +37,18 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 
-# Project outputs
-outputs/images/*
-outputs/audio/*
-outputs/video/*
-outputs/checkpoints/*
-!outputs/*/.gitkeep
+# Project outputs (generated art — not source; keep dir structure only)
+outputs/**
+!outputs/**/
+!outputs/**/.gitkeep
 
-# Model weights (downloaded at runtime)
+# Model weights & checkpoints (downloaded at runtime, never committed)
+.checkpoints/
 *.safetensors
 *.bin
 *.pt
 *.pth
+*.partial
 !*.pt  # Allow saved embeddings
 
 # OS
@@ -63,6 +63,8 @@ htmlcov/
 # Beads
 .beads/beads.db
 .beads/*.log
+.beads/dolt/
+.beads/dolt-server.*
 
 # External Dependencies
 ImageBind/
