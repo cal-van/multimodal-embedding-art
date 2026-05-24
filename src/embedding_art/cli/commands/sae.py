@@ -129,6 +129,7 @@ def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, 
 
     try:
         import torch
+
         from embedding_art.sae.training import train_sae
 
         embeddings_path = Path(embeddings_path)
@@ -164,6 +165,139 @@ def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, 
 
 
 # ---------------------------------------------------------------------------
+# sae train-stack — per-modality SAE stack (M3)
+# ---------------------------------------------------------------------------
+
+
+@sae.command("train-stack")
+@click.option(
+    "--image-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to image-modality embeddings (.pt from 'sae collect').",
+)
+@click.option(
+    "--audio-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to audio-modality embeddings.",
+)
+@click.option(
+    "--video-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to video-modality embeddings.",
+)
+@click.option(
+    "--text-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to text-modality embeddings.",
+)
+@click.option(
+    "--shared-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to mean-pooled-across-modalities embeddings (the shared SAE).",
+)
+@click.option(
+    "--output-root",
+    type=click.Path(),
+    required=True,
+    help="Root directory under which per-modality subdirs will be written.",
+)
+@click.option(
+    "--features",
+    type=int,
+    default=4096,
+    show_default=True,
+    help="SAE bottleneck width (same across modalities).",
+)
+@click.option(
+    "--sparsity",
+    type=int,
+    default=32,
+    show_default=True,
+    help="TopK sparsity (active features per input).",
+)
+@click.option(
+    "--iterations",
+    type=int,
+    default=25000,
+    show_default=True,
+    help="Per-modality gradient steps.",
+)
+@click.option(
+    "--embed-dim",
+    type=int,
+    default=768,
+    show_default=True,
+    help="Canonical embedding dimension. 768 for LanguageBind.",
+)
+@click.pass_context
+def train_stack(
+    ctx: click.Context,
+    image_embeddings,
+    audio_embeddings,
+    video_embeddings,
+    text_embeddings,
+    shared_embeddings,
+    output_root,
+    features,
+    sparsity,
+    iterations,
+    embed_dim,
+) -> None:
+    """Train the per-modality SAE stack (M3).
+
+    Trains one SAE per supplied modality embedding file. At least one of
+    --image-embeddings / --audio-embeddings / --video-embeddings /
+    --text-embeddings / --shared-embeddings must be supplied.
+    """
+    debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
+
+    try:
+        from embedding_art.sae.multimodal_stack import train_multimodal_sae_stack
+
+        embeddings_by_modality = {}
+        for modality, path in [
+            ("image", image_embeddings),
+            ("audio", audio_embeddings),
+            ("video", video_embeddings),
+            ("text", text_embeddings),
+            ("shared", shared_embeddings),
+        ]:
+            if path is not None:
+                embeddings_by_modality[modality] = Path(path)
+
+        if not embeddings_by_modality:
+            raise click.UsageError(
+                "Supply at least one of --image-embeddings, "
+                "--audio-embeddings, --video-embeddings, --text-embeddings, "
+                "--shared-embeddings."
+            )
+
+        console.print(
+            f"[bold]Training SAE stack for {sorted(embeddings_by_modality)} → "
+            f"{features} features each, TopK-{sparsity}[/bold]"
+        )
+
+        train_multimodal_sae_stack(
+            embeddings_by_modality=embeddings_by_modality,
+            output_root=Path(output_root),
+            embed_dim=embed_dim,
+            n_features=features,
+            k=sparsity,
+            n_iterations=iterations,
+        )
+        console.print(f"[bold green]SAE stack saved under {output_root}[/bold green]")
+
+    except Exception as e:
+        handle_exception(e, debug_mode)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # sae label
 # ---------------------------------------------------------------------------
 
@@ -191,6 +325,7 @@ def label(ctx: click.Context, model_path, encoder):
 
     try:
         import torch
+
         from embedding_art.core.concept import Concept
         from embedding_art.encoders.defaults import create_default_registry
 
@@ -236,7 +371,9 @@ def label(ctx: click.Context, model_path, encoder):
             console.print(table)
             console.print()
 
-        console.print("[dim]Label session ended. Model not re-saved (labels are for inspection only).[/dim]")
+        console.print(
+            "[dim]Label session ended. Model not re-saved (labels are for inspection only).[/dim]"
+        )
 
     except Exception as e:
         handle_exception(e, debug_mode)
