@@ -1,24 +1,30 @@
 """HTTP surface for the experiments package.
 
-Currently exposes a single synchronous endpoint:
+Exposes two synchronous endpoints:
 
 * ``POST /experiments/anchor-compare`` — Encodes one or more text references
   through the canonical multimodal encoder and reports pairwise cosine
-  similarities + per-reference top-K text-anchor readouts.
+  similarities + per-reference top-K text-anchor readouts. JSON body.
+* ``POST /experiments/anchor-compare-multimodal`` — Encodes the *same*
+  concept through up to four modalities (text + image + audio + video)
+  in one shared space and reports the pairwise cosine matrix + per-
+  modality text-anchor readouts. Multipart body for file uploads.
 
-This intentionally does NOT use the JobManager / websocket lifecycle: the
-work is fast (sub-second for typical inputs) and the response payload is
-small enough to return inline. Multipart upload support (for image / audio /
-video references) is a planned follow-up.
+These intentionally do NOT use the JobManager / websocket lifecycle:
+the work is fast (sub-second for text, a few seconds for multimodal
+with image/audio/video uploads) and the response payloads are small
+enough to return inline.
 """
 
 from __future__ import annotations
 
 import logging
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import torch
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
@@ -154,3 +160,134 @@ def _pairwise_cosine(
             sim = float(torch.nn.functional.cosine_similarity(a, b, dim=-1).item())
             matrix[label_i][label_j] = sim
     return matrix
+
+
+# ---------------------------------------------------------------------------
+# Multi-modal anchor compare
+# ---------------------------------------------------------------------------
+
+
+class AnchorCompareMultimodalEntry(BaseModel):
+    """Per-modality record for the multimodal anchor-compare response."""
+
+    modality: str
+    embedding_dim: int
+    text_anchor: list[dict[str, Any]] = Field(default_factory=list)
+    source: str | None = None
+
+
+class AnchorCompareMultimodalResponse(BaseModel):
+    concept_label: str
+    encoder: str
+    entries: list[AnchorCompareMultimodalEntry]
+    # ``cosine_matrix[modality_i][modality_j]`` — symmetric.
+    cosine_matrix: dict[str, dict[str, float]]
+
+
+async def _spool_upload(upload: UploadFile | None, suffix: str) -> Path | None:
+    """Write an UploadFile to a temp file and return the path, or ``None``.
+
+    Caller is responsible for ``Path.unlink()``. We use a tempfile rather
+    than streaming so the underlying encoder loaders (LanguageBind's
+    image / audio / video sub-encoders) can be given a filesystem path
+    without a separate streaming-decoder branch.
+    """
+    if upload is None:
+        return None
+    data = await upload.read()
+    if not data:
+        return None
+    fd = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        fd.write(data)
+    finally:
+        fd.close()
+    return Path(fd.name)
+
+
+@router.post(
+    "/anchor-compare-multimodal",
+    response_model=AnchorCompareMultimodalResponse,
+)
+async def anchor_compare_multimodal(
+    concept_label: str = Form(...),
+    encoder: str = Form("languagebind"),
+    top_k_text: int = Form(12),
+    text: str | None = Form(None),
+    image: UploadFile | None = File(None),
+    audio: UploadFile | None = File(None),
+    video: UploadFile | None = File(None),
+) -> AnchorCompareMultimodalResponse:
+    """Multimodal Platonic-representation probe.
+
+    Encode the *same* concept across text + image + audio + video in
+    one shared LanguageBind embedding space and return the cross-
+    modal cosine matrix + per-modality text-anchor readouts. Supply
+    only the modalities you have references for — at least one is
+    required, but the experiment is most informative with three or
+    four.
+    """
+    from embedding_art.encoders.defaults import create_default_registry
+    from embedding_art.experiments import run_anchor_comparison
+
+    refs_present = sum(x is not None for x in (text and text.strip() or None, image, audio, video))
+    if refs_present == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="anchor-compare-multimodal requires at least one of text / image / audio / video",
+        )
+
+    try:
+        registry = create_default_registry()
+        loaded_encoder = registry.load(encoder)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to load encoder '{encoder}': {e}"
+        ) from e
+
+    image_path = await _spool_upload(image, suffix=".png")
+    audio_path = await _spool_upload(audio, suffix=".wav")
+    video_path = await _spool_upload(video, suffix=".mp4")
+
+    try:
+        result = run_anchor_comparison(
+            concept_label=concept_label,
+            encoder=loaded_encoder,
+            encoder_name=encoder,
+            text=text.strip() if text else None,
+            image_path=image_path,
+            audio_path=audio_path,
+            video_path=video_path,
+            top_k_text=top_k_text,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"anchor-compare-multimodal failed: {e}") from e
+    finally:
+        # Clean up spooled uploads. Don't fail if a file disappeared.
+        for tmp in (image_path, audio_path, video_path):
+            if tmp is not None:
+                try:
+                    tmp.unlink()
+                except FileNotFoundError:
+                    pass
+
+    entries: list[AnchorCompareMultimodalEntry] = []
+    for modality, record in result.modalities.items():
+        anchor_records: list[dict[str, Any]] = []
+        for word, sim in record.get("text_anchor", []) or []:
+            anchor_records.append({"word": word, "similarity": float(sim)})
+        entries.append(
+            AnchorCompareMultimodalEntry(
+                modality=modality,
+                embedding_dim=int(record.get("embedding").shape[-1]),
+                text_anchor=anchor_records,
+                source=record.get("source"),
+            )
+        )
+
+    return AnchorCompareMultimodalResponse(
+        concept_label=result.concept_label,
+        encoder=result.encoder_name,
+        entries=entries,
+        cosine_matrix=result.cosine_matrix,
+    )

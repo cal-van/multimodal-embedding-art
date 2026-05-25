@@ -1,19 +1,74 @@
 import { useState } from 'react';
 import { api } from '../services/api';
-import type { AnchorCompareResponse } from '../services/api';
+import type {
+    AnchorCompareMultimodalResponse,
+    AnchorCompareResponse,
+} from '../services/api';
 
 /**
- * The text-only Platonic-representation probe.
+ * Platonic-representation probe.
  *
- * Encode 2+ text references through the canonical LanguageBind space
- * and display:
- * * A pairwise cosine matrix (heatmap-ish).
- * * Per-reference top-K text-anchor readouts side by side.
+ * Two modes:
+ * * Text — compare two or more text references in the canonical
+ *   LanguageBind embedding space.
+ * * Multimodal — compare the *same* concept across text + image +
+ *   audio + video references. The cosine matrix is the
+ *   cross-modal-agreement readout.
  *
- * Multipart upload for image / audio / video references is a planned
- * follow-up.
+ * In both modes the response also includes a per-reference (or per-
+ * modality) top-K text-anchor readout — what the model thinks the
+ * encoding "means" in language space.
  */
 export function AnchorComparePage() {
+    const [mode, setMode] = useState<'text' | 'multimodal'>('text');
+    return (
+        <div className="max-w-5xl mx-auto flex flex-col gap-6">
+            <div>
+                <h1 className="text-2xl font-bold">Anchor Comparison</h1>
+                <p className="text-sm text-dim mt-1">
+                    Probe whether semantically equivalent inputs land at the same point
+                    in the canonical LanguageBind embedding space. Use <strong>Text</strong> for
+                    a pure-text comparison or <strong>Multimodal</strong> to bring image / audio /
+                    video references into the same space.
+                </p>
+            </div>
+            <ModeToggle mode={mode} setMode={setMode} />
+            {mode === 'text' ? <TextOnlyForm /> : <MultimodalForm />}
+        </div>
+    );
+}
+
+function ModeToggle({
+    mode,
+    setMode,
+}: {
+    mode: 'text' | 'multimodal';
+    setMode: (m: 'text' | 'multimodal') => void;
+}) {
+    return (
+        <div className="flex gap-2">
+            {(['text', 'multimodal'] as const).map((m) => (
+                <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === m
+                        ? 'bg-[#8b5cf6] text-white shadow-[0_0_15px_rgba(139,92,246,0.5)]'
+                        : 'bg-[#27272a] text-dim hover:bg-[#3f3f46]'
+                        }`}
+                >
+                    {m === 'text' ? 'Text' : 'Multimodal'}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Text-only form (the original v1 path).
+// ---------------------------------------------------------------------------
+
+function TextOnlyForm() {
     const [conceptLabel, setConceptLabel] = useState('thunder');
     const [textsRaw, setTextsRaw] = useState('thunder\nelectric storm\ncrackling sound');
     const [topK, setTopK] = useState(12);
@@ -31,7 +86,6 @@ export function AnchorComparePage() {
             setError('Provide at least two text references (one per line).');
             return;
         }
-
         setLoading(true);
         setError(null);
         setResult(null);
@@ -50,17 +104,7 @@ export function AnchorComparePage() {
     };
 
     return (
-        <div className="max-w-5xl mx-auto flex flex-col gap-6">
-            <div>
-                <h1 className="text-2xl font-bold">Anchor Comparison</h1>
-                <p className="text-sm text-dim mt-1">
-                    Encode multiple text references through the canonical LanguageBind embedding
-                    space and compare them. Cosine matrix tells you whether semantically similar
-                    references land at the same point; per-reference text-anchor readouts show
-                    what the model thinks each text "means" in language space.
-                </p>
-            </div>
-
+        <>
             <form onSubmit={handleSubmit} className="card flex flex-col gap-4">
                 <div>
                     <label className="block text-sm text-dim mb-2" htmlFor="concept">
@@ -113,29 +157,193 @@ export function AnchorComparePage() {
                     </button>
                 </div>
             </form>
-
-            {error && (
-                <div className="card text-sm text-red-400">{error}</div>
-            )}
-
-            {result && <AnchorCompareResultView result={result} />}
-        </div>
+            {error && <div className="card text-sm text-red-400">{error}</div>}
+            {result && <TextResultView result={result} />}
+        </>
     );
 }
 
-function AnchorCompareResultView({ result }: { result: AnchorCompareResponse }) {
+function TextResultView({ result }: { result: AnchorCompareResponse }) {
     const labels = result.entries.map((e) => e.label);
     return (
         <div className="flex flex-col gap-6">
             <CosineMatrix labels={labels} matrix={result.cosine_matrix} />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {result.entries.map((entry) => (
-                    <AnchorReadoutCard key={entry.label} entry={entry} />
+                    <AnchorReadoutCard
+                        key={entry.label}
+                        title={entry.label}
+                        subtitle={`"${entry.text}" · dim=${entry.embedding_dim}`}
+                        anchors={entry.text_anchor}
+                    />
                 ))}
             </div>
         </div>
     );
 }
+
+// ---------------------------------------------------------------------------
+// Multimodal form: text + image + audio + video uploads.
+// ---------------------------------------------------------------------------
+
+function MultimodalForm() {
+    const [conceptLabel, setConceptLabel] = useState('thunder');
+    const [text, setText] = useState('thunder');
+    const [image, setImage] = useState<File | null>(null);
+    const [audio, setAudio] = useState<File | null>(null);
+    const [video, setVideo] = useState<File | null>(null);
+    const [topK, setTopK] = useState(12);
+    const [loading, setLoading] = useState(false);
+    const [result, setResult] = useState<AnchorCompareMultimodalResponse | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    const refsPresent = (text.trim() ? 1 : 0) + (image ? 1 : 0) + (audio ? 1 : 0) + (video ? 1 : 0);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (refsPresent === 0) {
+            setError('Provide at least one of text / image / audio / video.');
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        setResult(null);
+        try {
+            const response = await api.anchorCompareMultimodal({
+                concept_label: conceptLabel,
+                top_k_text: topK,
+                text: text.trim() || null,
+                image,
+                audio,
+                video,
+            });
+            setResult(response);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <>
+            <form onSubmit={handleSubmit} className="card flex flex-col gap-4">
+                <div>
+                    <label className="block text-sm text-dim mb-2" htmlFor="concept-multi">
+                        Concept label
+                    </label>
+                    <input
+                        id="concept-multi"
+                        type="text"
+                        value={conceptLabel}
+                        onChange={(e) => setConceptLabel(e.target.value)}
+                        className="w-full bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md"
+                    />
+                </div>
+                <div>
+                    <label className="block text-sm text-dim mb-2" htmlFor="text-multi">
+                        Text reference (optional)
+                    </label>
+                    <input
+                        id="text-multi"
+                        type="text"
+                        value={text}
+                        onChange={(e) => setText(e.target.value)}
+                        className="w-full bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md"
+                    />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <FileSlot label="Image" accept="image/*" file={image} onChange={setImage} />
+                    <FileSlot label="Audio" accept="audio/*" file={audio} onChange={setAudio} />
+                    <FileSlot label="Video" accept="video/*" file={video} onChange={setVideo} />
+                </div>
+                <div className="flex gap-4 items-end">
+                    <div>
+                        <label className="block text-sm text-dim mb-2" htmlFor="topk-multi">
+                            Top-K text-anchor words
+                        </label>
+                        <input
+                            id="topk-multi"
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={topK}
+                            onChange={(e) => setTopK(Number(e.target.value))}
+                            className="bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md w-24"
+                        />
+                    </div>
+                    <span className="text-xs text-dim self-center">
+                        {refsPresent} reference{refsPresent === 1 ? '' : 's'} attached
+                    </span>
+                    <button
+                        type="submit"
+                        disabled={loading || refsPresent === 0}
+                        className={`px-6 py-2 rounded-lg font-medium transition-all ml-auto ${loading || refsPresent === 0
+                            ? 'bg-[#27272a] text-dim cursor-not-allowed'
+                            : 'bg-[#8b5cf6] hover:bg-[#7c3aed] text-white shadow-[0_0_15px_rgba(139,92,246,0.5)]'
+                            }`}
+                    >
+                        {loading ? 'Comparing…' : 'Run comparison'}
+                    </button>
+                </div>
+            </form>
+            {error && <div className="card text-sm text-red-400">{error}</div>}
+            {result && <MultimodalResultView result={result} />}
+        </>
+    );
+}
+
+function FileSlot({
+    label,
+    accept,
+    file,
+    onChange,
+}: {
+    label: string;
+    accept: string;
+    file: File | null;
+    onChange: (f: File | null) => void;
+}) {
+    return (
+        <div>
+            <label className="block text-sm text-dim mb-2">{label}</label>
+            <input
+                type="file"
+                accept={accept}
+                onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+                className="block w-full text-xs text-dim file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-[#27272a] file:text-[#f4f4f5]"
+            />
+            {file && (
+                <div className="text-xs text-dim mt-1 truncate" title={file.name}>
+                    {file.name}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function MultimodalResultView({ result }: { result: AnchorCompareMultimodalResponse }) {
+    const labels = result.entries.map((e) => e.modality);
+    return (
+        <div className="flex flex-col gap-6">
+            <CosineMatrix labels={labels} matrix={result.cosine_matrix} />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {result.entries.map((entry) => (
+                    <AnchorReadoutCard
+                        key={entry.modality}
+                        title={entry.modality}
+                        subtitle={`dim=${entry.embedding_dim}${entry.source ? ` · ${entry.source.split('/').slice(-1)[0]}` : ''}`}
+                        anchors={entry.text_anchor}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Shared sub-components (cosine matrix + anchor card).
+// ---------------------------------------------------------------------------
 
 function CosineMatrix({
     labels,
@@ -186,21 +394,23 @@ function CosineMatrix({
 }
 
 function AnchorReadoutCard({
-    entry,
+    title,
+    subtitle,
+    anchors,
 }: {
-    entry: AnchorCompareResponse['entries'][number];
+    title: string;
+    subtitle: string;
+    anchors: Array<{ word: string; similarity: number }>;
 }) {
     return (
         <div className="card flex flex-col gap-2">
             <div>
-                <div className="text-sm font-bold">{entry.label}</div>
-                <div className="text-xs text-dim font-mono">
-                    "{entry.text}" · dim={entry.embedding_dim}
-                </div>
+                <div className="text-sm font-bold">{title}</div>
+                <div className="text-xs text-dim font-mono">{subtitle}</div>
             </div>
-            {entry.text_anchor.length > 0 ? (
+            {anchors.length > 0 ? (
                 <ul className="text-xs text-dim font-mono space-y-1">
-                    {entry.text_anchor.map((a) => (
+                    {anchors.map((a) => (
                         <li key={a.word} className="flex justify-between">
                             <span>{a.word}</span>
                             <span>{a.similarity.toFixed(3)}</span>

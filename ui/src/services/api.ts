@@ -75,6 +75,20 @@ export interface AnchorCompareResponse {
   cosine_matrix: Record<string, Record<string, number>>;
 }
 
+export interface AnchorCompareMultimodalEntry {
+  modality: string;
+  embedding_dim: number;
+  text_anchor: Array<{ word: string; similarity: number }>;
+  source: string | null;
+}
+
+export interface AnchorCompareMultimodalResponse {
+  concept_label: string;
+  encoder: string;
+  entries: AnchorCompareMultimodalEntry[];
+  cosine_matrix: Record<string, Record<string, number>>;
+}
+
 export const api = {
   createJob: async (targetText: string[], outputModality: string = 'image'): Promise<Job> => {
     const res = await fetch(`${API_BASE}/jobs/`, {
@@ -131,6 +145,36 @@ export const api = {
     if (!res.ok) {
       const detail = await res.text();
       throw new Error(`anchor-compare failed: ${detail}`);
+    }
+    return res.json();
+  },
+
+  anchorCompareMultimodal: async (request: {
+    concept_label: string;
+    encoder?: string;
+    top_k_text?: number;
+    text?: string | null;
+    image?: File | null;
+    audio?: File | null;
+    video?: File | null;
+  }): Promise<AnchorCompareMultimodalResponse> => {
+    const form = new FormData();
+    form.append('concept_label', request.concept_label);
+    if (request.encoder) form.append('encoder', request.encoder);
+    if (request.top_k_text !== undefined) {
+      form.append('top_k_text', String(request.top_k_text));
+    }
+    if (request.text) form.append('text', request.text);
+    if (request.image) form.append('image', request.image);
+    if (request.audio) form.append('audio', request.audio);
+    if (request.video) form.append('video', request.video);
+    const res = await fetch(`${API_BASE}/experiments/anchor-compare-multimodal`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`anchor-compare-multimodal failed: ${detail}`);
     }
     return res.json();
   },
