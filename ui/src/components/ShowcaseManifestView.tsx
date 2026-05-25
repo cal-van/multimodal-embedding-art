@@ -222,12 +222,184 @@ function InterpretationBlock({ data }: { data: Record<string, unknown> }) {
 }
 
 function EvaluationCard({ evaluation }: { evaluation: Record<string, unknown> }) {
+    const perModality = evaluation.per_modality_similarity as
+        | Record<string, number>
+        | undefined;
+    const jaccard = evaluation.cross_modal_text_anchor_agreement_jaccard as
+        | Record<string, Record<string, number>>
+        | undefined;
+    const probes = evaluation.cross_encoder_probes as
+        | { table?: Record<string, Record<string, number | null>>; reports?: unknown[] }
+        | undefined;
+    const stability = evaluation.seed_stability as
+        | {
+              n_seeds?: number;
+              mean_similarity?: number;
+              std_similarity?: number;
+              min_similarity?: number;
+              max_similarity?: number;
+              feature_overlap_jaccard?: number | null;
+          }
+        | undefined;
+
     return (
-        <div className="card flex flex-col gap-2">
+        <div className="card flex flex-col gap-4">
             <h3 className="text-sm font-bold uppercase tracking-wide">Evaluation</h3>
-            <pre className="text-xs text-dim font-mono whitespace-pre-wrap">
-                {JSON.stringify(evaluation, null, 2)}
-            </pre>
+
+            {perModality && Object.keys(perModality).length > 0 && (
+                <div>
+                    <div className="text-xs uppercase tracking-wide text-dim mb-1">
+                        Per-modality similarity
+                    </div>
+                    <table className="text-xs font-mono">
+                        <tbody>
+                            {Object.entries(perModality).map(([mod, sim]) => (
+                                <tr key={mod}>
+                                    <td className="pr-3">{mod}</td>
+                                    <td>{Number(sim).toFixed(3)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {jaccard && Object.keys(jaccard).length > 0 && (
+                <SimilarityMatrix
+                    title="Cross-modal text-anchor agreement (Jaccard)"
+                    matrix={jaccard}
+                />
+            )}
+
+            {probes?.table && Object.keys(probes.table).length > 0 && (
+                <div>
+                    <div className="text-xs uppercase tracking-wide text-dim mb-1">
+                        Cross-encoder probes
+                    </div>
+                    <ProbeTable table={probes.table} />
+                </div>
+            )}
+
+            {stability && stability.n_seeds !== undefined && (
+                <div>
+                    <div className="text-xs uppercase tracking-wide text-dim mb-1">
+                        Seed stability ({stability.n_seeds} seeds)
+                    </div>
+                    <table className="text-xs font-mono">
+                        <tbody>
+                            <tr>
+                                <td className="pr-3">mean</td>
+                                <td>{stability.mean_similarity?.toFixed(3)}</td>
+                            </tr>
+                            <tr>
+                                <td className="pr-3">std</td>
+                                <td>{stability.std_similarity?.toFixed(3)}</td>
+                            </tr>
+                            <tr>
+                                <td className="pr-3">min / max</td>
+                                <td>
+                                    {stability.min_similarity?.toFixed(3)} /{' '}
+                                    {stability.max_similarity?.toFixed(3)}
+                                </td>
+                            </tr>
+                            {stability.feature_overlap_jaccard !== null &&
+                                stability.feature_overlap_jaccard !== undefined && (
+                                    <tr>
+                                        <td className="pr-3">feature overlap (J)</td>
+                                        <td>
+                                            {stability.feature_overlap_jaccard.toFixed(3)}
+                                        </td>
+                                    </tr>
+                                )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
+    );
+}
+
+function SimilarityMatrix({
+    title,
+    matrix,
+}: {
+    title: string;
+    matrix: Record<string, Record<string, number>>;
+}) {
+    const rowKeys = Object.keys(matrix).sort();
+    const colKeys = Array.from(
+        new Set(rowKeys.flatMap((r) => Object.keys(matrix[r] ?? {}))),
+    ).sort();
+    return (
+        <div>
+            <div className="text-xs uppercase tracking-wide text-dim mb-1">{title}</div>
+            <table className="text-xs font-mono">
+                <thead>
+                    <tr>
+                        <th></th>
+                        {colKeys.map((c) => (
+                            <th key={c} className="px-2 text-left">
+                                {c}
+                            </th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {rowKeys.map((r) => (
+                        <tr key={r}>
+                            <td className="pr-2 font-bold">{r}</td>
+                            {colKeys.map((c) => {
+                                const v = matrix[r]?.[c];
+                                return (
+                                    <td key={c} className="px-2">
+                                        {v === undefined ? '—' : v.toFixed(3)}
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+function ProbeTable({
+    table,
+}: {
+    table: Record<string, Record<string, number | null>>;
+}) {
+    const modalities = Object.keys(table).sort();
+    const probeNames = Array.from(
+        new Set(modalities.flatMap((m) => Object.keys(table[m] ?? {}))),
+    ).sort();
+    return (
+        <table className="text-xs font-mono">
+            <thead>
+                <tr>
+                    <th></th>
+                    {probeNames.map((p) => (
+                        <th key={p} className="px-2 text-left">
+                            {p}
+                        </th>
+                    ))}
+                </tr>
+            </thead>
+            <tbody>
+                {modalities.map((m) => (
+                    <tr key={m}>
+                        <td className="pr-2 font-bold">{m}</td>
+                        {probeNames.map((p) => {
+                            const v = table[m]?.[p];
+                            return (
+                                <td key={p} className="px-2">
+                                    {v === undefined || v === null ? '—' : v.toFixed(3)}
+                                </td>
+                            );
+                        })}
+                    </tr>
+                ))}
+            </tbody>
+        </table>
     );
 }
