@@ -218,11 +218,16 @@ class LanguageBindEncoder:
             raise ModelLoadError(
                 "languagebind",
                 ImportError(
-                    "LanguageBind is not installed. Clone and install from "
-                    "https://github.com/PKU-YuanGroup/LanguageBind:\n"
-                    "  git clone https://github.com/PKU-YuanGroup/LanguageBind ../LanguageBind\n"
-                    "  cd ../LanguageBind && pip install -e .\n"
-                    "(See CLAUDE.md for canonical setup.)"
+                    "LanguageBind is not installed. It's NOT on PyPI \u2014 distributed as a\n"
+                    "research codebase without setup.py. From the parent directory of\n"
+                    "this repo, the simplest path is:\n"
+                    "\n"
+                    "  git clone https://github.com/PKU-YuanGroup/LanguageBind\n"
+                    '  export PYTHONPATH="$PYTHONPATH:$(pwd)/LanguageBind"\n'
+                    "\n"
+                    "Add that export to ~/.zshrc (macOS) or ~/.bashrc so it persists.\n"
+                    "Alternatively, write a minimal setup.py inside the clone and run\n"
+                    "`pip install -e .` against it. See README.md / CLAUDE.md."
                 ),
             ) from e
 

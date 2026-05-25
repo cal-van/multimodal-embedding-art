@@ -15,6 +15,7 @@ from embedding_art.exceptions import (
     EncoderNotFoundError,
     FeatureNotFoundError,
     MemoryBudgetExceededError,
+    ModelLoadError,
     SAENotTrainedError,
 )
 
@@ -210,3 +211,45 @@ class TestFeatureNotFoundError:
         err = FeatureNotFoundError("dog_bark", ["cat_meow"])
         with pytest.raises(FeatureNotFoundError):
             raise err
+
+
+# ---------------------------------------------------------------------------
+# ModelLoadError: ImportError branch (don't suggest cache nuke for missing pkg)
+# ---------------------------------------------------------------------------
+
+
+class TestModelLoadErrorImportBranch:
+    """When the underlying failure is an ImportError, the generic
+    "rm -rf ~/.cache/huggingface/hub" suggestion is misleading — the cache
+    isn't the problem, the missing module is. The error message must surface
+    the import error's install instructions instead of the network/cache
+    boilerplate."""
+
+    def test_import_error_surfaces_install_instructions(self):
+        original = ImportError("LanguageBind is not installed. See README.md for setup.")
+        err = ModelLoadError("languagebind", original)
+        msg = str(err)
+        assert "LanguageBind is not installed" in msg
+        assert "See README.md for setup." in msg
+
+    def test_import_error_does_not_suggest_cache_nuke(self):
+        original = ImportError("languagebind missing")
+        err = ModelLoadError("languagebind", original)
+        msg = str(err)
+        assert "rm -rf" not in msg
+        assert "Check your internet connection" not in msg
+
+    def test_non_import_error_still_shows_network_suggestions(self):
+        # Regression: a real network / cache failure should still surface
+        # the "Check your connection / clear cache" guidance.
+        original = RuntimeError("Connection timed out fetching weights")
+        err = ModelLoadError("siglip2-so400m", original)
+        msg = str(err)
+        assert "Check your internet connection" in msg
+        assert "rm -rf ~/.cache/huggingface/hub" in msg
+
+    def test_stores_model_name_and_original_error(self):
+        original = ImportError("missing")
+        err = ModelLoadError("clap-general", original)
+        assert err.model_name == "clap-general"
+        assert err.original_error is original

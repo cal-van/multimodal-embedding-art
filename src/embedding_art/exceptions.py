@@ -34,18 +34,25 @@ class ModelLoadError(EmbeddingArtError):
         self.model_name = model_name
         self.original_error = original_error
 
-        message = (
-            f"Failed to load model '{model_name}'.\n\n"
-            f"Original error: {original_error}\n\n"
-            "Possible causes:\n"
-            "  - Network connection issues during download\n"
-            "  - Insufficient disk space for model weights\n"
-            "  - Corrupted model cache\n\n"
-            "Suggestions:\n"
-            "  - Check your internet connection\n"
-            "  - Clear the model cache: rm -rf ~/.cache/huggingface/hub\n"
-            "  - Try again with a stable connection"
-        )
+        # When the underlying failure is a missing Python module, the network /
+        # cache suggestions are actively misleading — surface the import error
+        # verbatim instead so the user reads the install instructions baked
+        # into the wrapper's ImportError message.
+        if isinstance(original_error, ImportError):
+            message = f"Failed to load model '{model_name}'.\n\n" f"{original_error}"
+        else:
+            message = (
+                f"Failed to load model '{model_name}'.\n\n"
+                f"Original error: {original_error}\n\n"
+                "Possible causes:\n"
+                "  - Network connection issues during download\n"
+                "  - Insufficient disk space for model weights\n"
+                "  - Corrupted model cache\n\n"
+                "Suggestions:\n"
+                "  - Check your internet connection\n"
+                "  - Clear the model cache: rm -rf ~/.cache/huggingface/hub\n"
+                "  - Try again with a stable connection"
+            )
         super().__init__(message)
 
 
