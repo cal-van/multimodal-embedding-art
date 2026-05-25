@@ -31,13 +31,19 @@ from embedding_art.diffusion_priors.dual_track import (
     dual_track_loss,
     make_dual_track_tracks,
 )
+from embedding_art.diffusion_priors.sd35_adapter import (
+    SD35DiffusionAdapter,
+    build_vsd_phi_adapter,
+)
 from embedding_art.diffusion_priors.sds import SDSLoss
 from embedding_art.diffusion_priors.vsd import VSDLoss
 
 __all__ = [
     "DualTrackConfig",
+    "SD35DiffusionAdapter",
     "SDSLoss",
     "VSDLoss",
+    "build_vsd_phi_adapter",
     "dual_track_loss",
     "make_dual_track_tracks",
 ]
