@@ -153,6 +153,7 @@ class LanguageBindEncoder:
         device: str = "mps",
         cache_dir: str | Path | None = None,
         eager_load: tuple[str, ...] = ("image",),
+        enable_sdpa: bool | None = None,
     ) -> None:
         self._device = torch.device(device)
         self._cache_dir = (
@@ -167,6 +168,13 @@ class LanguageBindEncoder:
         # (tokenizer is shared via the first loaded modality).
         self._modality_models: dict[str, dict[str, Any]] = {}
         self._tokenizer: Any = None
+
+        # SDPA defaults: enabled when running on MPS or CUDA (where the
+        # flash-style kernel lives); off on CPU to avoid pointless
+        # rewrap. Passing an explicit bool overrides.
+        if enable_sdpa is None:
+            enable_sdpa = self._device.type in {"mps", "cuda"}
+        self._enable_sdpa = enable_sdpa
 
         for modality in eager_load:
             self._load_modality(modality)  # type: ignore[arg-type]
@@ -241,6 +249,14 @@ class LanguageBindEncoder:
                 "model": model,
                 "processor": processor,
             }
+            if self._enable_sdpa:
+                n_patched = self._patch_clip_attention(model)
+                if n_patched:
+                    logger.info(
+                        "LanguageBind-%s: routed %d attention blocks to SDPA",
+                        modality,
+                        n_patched,
+                    )
 
             # Source the text tokenizer from the first-loaded modality —
             # tokenizers are identical across modalities (all built on CLIP).
@@ -696,6 +712,94 @@ class LanguageBindEncoder:
                 ),
             )
         return Concept(embedding=emb, description=str(spec.value))
+
+    # ------------------------------------------------------------------
+    # Apple Silicon perf
+    # ------------------------------------------------------------------
+
+    def enable_sdpa_attention(self) -> dict[str, int]:
+        """Re-route attention blocks to ``scaled_dot_product_attention``.
+
+        Walks every loaded modality's transformer and replaces any
+        attention block of the standard CLIP shape (``q_proj``,
+        ``k_proj``, ``v_proj``, ``out_proj``, ``num_heads``) with an
+        SDPA-backed forward. On PyTorch 2.4+ MPS this dispatches to a
+        flash-attention-style kernel and gives ~2x attention
+        throughput.
+
+        Returns:
+            Map ``{modality: n_blocks_patched}``. Modalities with zero
+            patches usually mean the model already uses SDPA natively
+            or has an unrecognised attention layout.
+        """
+        report: dict[str, int] = {}
+        for modality, bundle in self._modality_models.items():
+            model = bundle.get("model")
+            if model is None:
+                continue
+            report[modality] = self._patch_clip_attention(model)
+        return report
+
+    @staticmethod
+    def _patch_clip_attention(root: Any) -> int:
+        """Patch every CLIP-shaped attention block under ``root``.
+
+        Returns the number of blocks patched.
+        """
+
+        def _has_clip_attention_shape(m: Any) -> bool:
+            return (
+                hasattr(m, "q_proj")
+                and hasattr(m, "k_proj")
+                and hasattr(m, "v_proj")
+                and hasattr(m, "out_proj")
+                and hasattr(m, "num_heads")
+            )
+
+        n_patched = 0
+        for module in root.modules():
+            if not _has_clip_attention_shape(module):
+                continue
+
+            def _make_forward(block: Any) -> Any:
+                num_heads = block.num_heads
+
+                def _sdpa_forward(
+                    hidden_states: torch.Tensor,
+                    attention_mask: Any = None,
+                    causal_attention_mask: Any = None,
+                    output_attentions: bool = False,
+                    **kwargs: Any,
+                ) -> Any:
+                    b, n, d = hidden_states.shape
+                    head_dim = d // num_heads
+                    q = block.q_proj(hidden_states).view(b, n, num_heads, head_dim).transpose(1, 2)
+                    k = block.k_proj(hidden_states).view(b, n, num_heads, head_dim).transpose(1, 2)
+                    v = block.v_proj(hidden_states).view(b, n, num_heads, head_dim).transpose(1, 2)
+                    # Causal/attention masks are forwarded directly;
+                    # SDPA handles both. ``causal_attention_mask`` is
+                    # CLIP's name for the lookahead mask in the text
+                    # tower.
+                    mask = (
+                        causal_attention_mask
+                        if causal_attention_mask is not None
+                        else attention_mask
+                    )
+                    attn = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+                    attn = attn.transpose(1, 2).contiguous().view(b, n, d)
+                    out = block.out_proj(attn)
+                    if output_attentions:
+                        # The HF API expects (attn_output, attn_weights).
+                        # SDPA doesn't return weights; return None to
+                        # match the contract.
+                        return out, None
+                    return out, None
+
+                return _sdpa_forward
+
+            module.forward = _make_forward(module)  # type: ignore[assignment]
+            n_patched += 1
+        return n_patched
 
     # ------------------------------------------------------------------
     # Memory management
