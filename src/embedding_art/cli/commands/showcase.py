@@ -294,6 +294,7 @@ def _showcase_impl(
     interpret: bool = True,
     sae_path: Path | None = None,
     evaluate: bool = True,
+    probe_encoders: dict[str, Any] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     """Orchestrate the per-modality renderings and assemble the bundle.
@@ -364,6 +365,7 @@ def _showcase_impl(
             sae_feature_labels=sae_feature_labels,
             interpret=interpret,
             evaluate=evaluate,
+            probe_encoders=probe_encoders,
             progress_callback=progress_callback,
         )
         _emit(
@@ -426,6 +428,7 @@ def _render_track(
     sae_feature_labels: dict[int, str] | None,
     interpret: bool,
     evaluate: bool,
+    probe_encoders: dict[str, Any] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Render a single track (honest or natural) into ``output_dir``.
@@ -542,6 +545,8 @@ def _render_track(
             modalities_data=manifest["modalities"],
             output_dir=output_dir,
             device=device,
+            target_text=target_text,
+            probe_encoders=probe_encoders,
         )
 
     manifest_path = output_dir / "manifest.json"
@@ -920,17 +925,17 @@ def _compute_evaluation_card(
     modalities_data: dict[str, dict[str, Any]],
     output_dir: Path,
     device: str,
+    target_text: str | None = None,
+    probe_encoders: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute the evaluation card (M8): cross-modal agreement matrix +
-    per-modality final cosine similarity summary.
+    per-modality final cosine similarity + optional cross-encoder probes.
 
-    This is a minimum-viable evaluation: it does NOT yet include the
-    SigLIP2 / DINOv3 / CLAP cross-encoder probes (those are the M8 full
-    deliverable). What it produces:
-      * Per-modality final similarity to the canonical target.
-      * Cross-modal agreement matrix: pairwise cosine similarities between
-        the per-modality output embeddings in the canonical space (so
-        a perfectly cross-modally-aligned showcase has all-ones off-diagonal).
+    When ``probe_encoders`` is supplied (a mapping ``{name: encoder}``),
+    each rendered output is re-encoded with each probe and the cosine
+    similarity to the probe's projection of ``target_text`` is reported.
+    Probes that lack the required ``encode_<modality>`` method are
+    silently skipped (e.g. DINOv3 has no audio).
     """
     similarities = {
         mod: float(data.get("final_similarity", float("nan")))
@@ -964,16 +969,36 @@ def _compute_evaluation_card(
             union = text_anchors[m1] | text_anchors[m2]
             agreement[m1][m2] = (len(inter) / len(union)) if union else 0.0
 
-    return {
+    card: dict[str, Any] = {
         "per_modality_similarity": similarities,
         "cross_modal_text_anchor_agreement_jaccard": agreement,
         "encoder": encoder_name,
-        "notes": (
-            "Minimum-viable evaluation: per-modality final cosine + Jaccard "
-            "overlap of top-10 text-anchor words. Cross-encoder probes "
-            "(SigLIP2/CLAP/DINOv3) and seed-stability are the M8 follow-up."
-        ),
     }
+
+    if probe_encoders:
+        from embedding_art.evaluation.probes import (
+            compute_cross_encoder_probes,
+            reports_to_table,
+        )
+
+        modality_outputs: dict[str, Any] = {}
+        for mod, data in modalities_data.items():
+            if mod == "text":
+                continue
+            saved = data.get("output_path") or data.get("path") or data.get("file")
+            if saved:
+                modality_outputs[mod] = Path(saved)
+        reports = compute_cross_encoder_probes(
+            target_text=target_text,
+            modality_outputs=modality_outputs,
+            probes=probe_encoders,
+        )
+        card["cross_encoder_probes"] = {
+            "table": reports_to_table(reports),
+            "reports": [r.to_dict() for r in reports],
+        }
+
+    return card
 
 
 def _save_image_output(result: Any, generator: Any, path: Path) -> None:
