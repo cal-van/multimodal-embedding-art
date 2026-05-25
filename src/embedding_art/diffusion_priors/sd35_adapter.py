@@ -94,6 +94,17 @@ class SD35DiffusionAdapter:
             dev = torch.device(self.device) if isinstance(self.device, str) else self.device
             logger.info("Loading SD3.5 pipeline %s on %s", self.model_id, dev)
             self._pipeline = self.loader(self.model_id, dev, self.dtype)
+            # Apply Apple Silicon perf knobs to the full pipeline. The
+            # SD3.5 MMDiT is the largest forward in the run so QKV
+            # fusion + attention slicing materially matter here.
+            try:
+                from embedding_art.perf import apply_diffusers_perf_knobs
+
+                report = apply_diffusers_perf_knobs(self._pipeline)
+                if any(report.values()):
+                    logger.info("SD3.5 pipeline perf knobs applied: %s", report)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("perf knob application failed: %s", exc)
         return self._pipeline
 
     @property

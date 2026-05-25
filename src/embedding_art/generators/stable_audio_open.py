@@ -130,6 +130,19 @@ class StableAudioOpenGenerator:
 
         del pipeline
 
+        # Apple Silicon perf: enable VAE tiling for the audio decoder so
+        # 47-second clips don't peak above the M1 Max unified-memory
+        # budget. Other knobs (QKV fusion, attention slicing) are full-
+        # pipeline only.
+        from embedding_art.perf import apply_diffusers_perf_knobs
+
+        apply_diffusers_perf_knobs(
+            self,
+            fuse_qkv=False,
+            enable_attention_slicing=False,
+            enable_vae_tiling=True,
+        )
+
     @property
     def latent_shape(self) -> tuple[int, ...]:
         """``[1, 64, 1, T_latent]`` — DAC latent shape."""

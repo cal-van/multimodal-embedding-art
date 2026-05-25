@@ -130,6 +130,17 @@ class LTXVideoGenerator:
 
         del pipeline
 
+        # Apple Silicon perf: tile the video VAE decode so 5-second
+        # 720p clips don't peak above the M1 Max unified-memory budget.
+        from embedding_art.perf import apply_diffusers_perf_knobs
+
+        apply_diffusers_perf_knobs(
+            self,
+            fuse_qkv=False,
+            enable_attention_slicing=False,
+            enable_vae_tiling=True,
+        )
+
     @property
     def latent_shape(self) -> tuple[int, ...]:
         """``[1, 128, T_lat, H_lat, W_lat]`` — CVA latent shape."""

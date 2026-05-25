@@ -203,6 +203,15 @@ VALID_TRACKS = ("honest", "natural")
     "'fp32' is the safe default.",
 )
 @click.option(
+    "--compile-mode",
+    type=click.Choice(["none", "default", "reduce-overhead", "max-autotune"]),
+    default="none",
+    show_default=True,
+    help="Apple Silicon: wrap the loss callable in torch.compile. "
+    "'reduce-overhead' is the recommended setting on PyTorch 2.5+ MPS for a "
+    "1.5-2.5x speedup on the optimisation hot loop. 'none' disables.",
+)
+@click.option(
     "--interpret/--no-interpret",
     default=True,
     show_default=True,
@@ -238,6 +247,7 @@ def showcase(
     video_backbone: str,
     tracks: str,
     autocast_dtype: str,
+    compile_mode: str,
     interpret: bool,
     sae_path: str | None,
     evaluate: bool,
@@ -268,6 +278,7 @@ def showcase(
             video_backbone=video_backbone,
             tracks=track_list,
             autocast_dtype=autocast_dtype,
+            compile_mode=compile_mode,
             interpret=interpret,
             sae_path=Path(sae_path) if sae_path else None,
             evaluate=evaluate,
@@ -291,6 +302,7 @@ def _showcase_impl(
     video_backbone: str = "ltx-video",
     tracks: list[str] | None = None,
     autocast_dtype: str = "fp32",
+    compile_mode: str = "none",
     interpret: bool = True,
     sae_path: Path | None = None,
     evaluate: bool = True,
@@ -361,6 +373,7 @@ def _showcase_impl(
             audio_backbone=audio_backbone,
             video_backbone=video_backbone,
             autocast_dtype=autocast_dtype,
+            compile_mode=compile_mode,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
             interpret=interpret,
@@ -424,10 +437,11 @@ def _render_track(
     audio_backbone: str,
     video_backbone: str,
     autocast_dtype: str,
-    sae: Any,
-    sae_feature_labels: dict[int, str] | None,
-    interpret: bool,
-    evaluate: bool,
+    compile_mode: str = "none",
+    sae: Any = None,
+    sae_feature_labels: dict[int, str] | None = None,
+    interpret: bool = True,
+    evaluate: bool = True,
     probe_encoders: dict[str, Any] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
@@ -444,6 +458,7 @@ def _render_track(
         seed=seed,
         loss=_build_track_loss_config(track),
         autocast_dtype=autocast_dtype,  # type: ignore[arg-type]
+        compile_mode=compile_mode,  # type: ignore[arg-type]
     )
 
     console.print(f"[bold magenta]Rendering track: {track}[/bold magenta]")
@@ -476,6 +491,13 @@ def _render_track(
                 "text_anchor": (record.get("interpretation") or {}).get("text_anchor"),
             },
         )
+        # Apple Silicon: release the MPS allocator's cached working set
+        # between modalities so the next modality starts with full
+        # headroom. No-op on non-MPS backends.
+        if getattr(config, "empty_mps_cache_between_modalities", True):
+            from embedding_art.perf import empty_mps_cache
+
+            empty_mps_cache()
 
     if "image" in modalities:
         _emit(progress_callback, {"type": "modality_start", "track": track, "modality": "image"})

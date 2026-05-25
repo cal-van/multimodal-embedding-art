@@ -104,6 +104,18 @@ class OptimizationConfig:
     # ``"bf16"`` is the recommended setting and roughly halves wall-time.
     autocast_dtype: Literal["fp32", "fp16", "bf16"] = "fp32"
 
+    # Apple Silicon perf knobs.  ``compile_mode`` wraps the encoder + loss
+    # path in ``torch.compile`` when not ``"none"``.  ``"reduce-overhead"``
+    # is the recommended setting on PyTorch 2.5+ MPS for a 1.5-2.5x speedup
+    # on the optimisation hot loop; ``"default"`` is the safe baseline;
+    # ``"max-autotune"`` is aggressive and brittle, use only after profiling.
+    compile_mode: Literal["none", "default", "reduce-overhead", "max-autotune"] = "none"
+
+    # ``empty_mps_cache_between_modalities`` calls ``torch.mps.empty_cache``
+    # between the four showcase modalities to recover the MPS allocator's
+    # working set.  Free win on M1 Max, no-op on non-MPS backends.
+    empty_mps_cache_between_modalities: bool = True
+
     # Loss function
     loss: LossConfig = field(default_factory=LossConfig)
 

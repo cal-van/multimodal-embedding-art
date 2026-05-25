@@ -124,6 +124,21 @@ class SD35ImageGenerator:
         for param in self.vae.parameters():
             param.requires_grad = False
 
+        # Apple Silicon perf knobs (M1/M2 Max).  Tiling is the load-bearing
+        # one — without it 1024x1024 VAE decode peaks above 12GB on the
+        # unified memory.  Best-effort: silently skip when diffusers
+        # doesn't expose the method.
+        from embedding_art.perf import apply_diffusers_perf_knobs
+
+        knob_report = apply_diffusers_perf_knobs(
+            self,
+            fuse_qkv=False,  # VAE-only path has no Q/K/V to fuse.
+            enable_attention_slicing=False,
+            enable_vae_tiling=True,
+        )
+        if any(knob_report.values()):
+            logger.info("SD3.5 VAE perf knobs applied: %s", knob_report)
+
     # ------------------------------------------------------------------
     # Generator protocol
     # ------------------------------------------------------------------
