@@ -306,3 +306,98 @@ def test_total_is_sum_of_components(mock_encoder):
 
     expected_total = sum(breakdown.components.values())
     torch.testing.assert_close(breakdown.total, expected_total, rtol=1e-5, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Test 10–12: Text-anchor auxiliary loss (M4)
+# ---------------------------------------------------------------------------
+
+
+def test_text_anchor_loss_disabled_by_default(mock_encoder):
+    """text_anchor_weight=0 → no 'text_anchor' component."""
+    from embedding_art.core.loss import CompositeLoss
+
+    config = LossConfig(similarity_weight=1.0)
+    loss_fn = CompositeLoss(config, mock_encoder)
+    target = _make_concept(seed=10)
+    current_output = torch.randn(1, 3, 64, 64)
+    breakdown = loss_fn(current_output, target, mock_encoder)
+    assert "text_anchor" not in breakdown.components
+
+
+def test_text_anchor_loss_uses_explicit_text(mock_encoder):
+    """When text_anchor_text is set, the loss adds a cosine term against
+    the encoder's encode_text result for that exact string."""
+    from embedding_art.core.loss import CompositeLoss
+
+    # Equip mock_encoder with encode_text returning a deterministic
+    # embedding.
+    fake_text_emb = F.normalize(torch.randn(1, 1024), dim=-1)
+    mock_encoder.encode_text = MagicMock(return_value=fake_text_emb)
+
+    config = LossConfig(
+        similarity_weight=1.0,
+        text_anchor_weight=0.5,
+        text_anchor_text="storm",
+    )
+    loss_fn = CompositeLoss(config, mock_encoder)
+    target = _make_concept(seed=11)
+    current_output = torch.randn(1, 3, 64, 64)
+    breakdown = loss_fn(current_output, target, mock_encoder)
+
+    assert "text_anchor" in breakdown.components
+    mock_encoder.encode_text.assert_called_once_with("storm")
+
+
+def test_text_anchor_loss_falls_back_to_concept_source(mock_encoder):
+    """No explicit text → use the target Concept's source string."""
+    from embedding_art.core.loss import CompositeLoss
+
+    fake_text_emb = F.normalize(torch.randn(1, 1024), dim=-1)
+    mock_encoder.encode_text = MagicMock(return_value=fake_text_emb)
+
+    config = LossConfig(similarity_weight=1.0, text_anchor_weight=0.5)
+    loss_fn = CompositeLoss(config, mock_encoder)
+    target = _make_concept(seed=12)
+    target.source = "goldfish"
+
+    current_output = torch.randn(1, 3, 64, 64)
+    breakdown = loss_fn(current_output, target, mock_encoder)
+
+    assert "text_anchor" in breakdown.components
+    mock_encoder.encode_text.assert_called_once_with("goldfish")
+
+
+def test_text_anchor_loss_caches_encode_text(mock_encoder):
+    """encode_text must only be called once across multiple loss invocations."""
+    from embedding_art.core.loss import CompositeLoss
+
+    fake_text_emb = F.normalize(torch.randn(1, 1024), dim=-1)
+    mock_encoder.encode_text = MagicMock(return_value=fake_text_emb)
+
+    config = LossConfig(
+        similarity_weight=1.0,
+        text_anchor_weight=0.5,
+        text_anchor_text="thunder",
+    )
+    loss_fn = CompositeLoss(config, mock_encoder)
+    target = _make_concept(seed=13)
+    current_output = torch.randn(1, 3, 64, 64)
+    for _ in range(3):
+        loss_fn(current_output, target, mock_encoder)
+    assert mock_encoder.encode_text.call_count == 1
+
+
+def test_text_anchor_loss_silent_when_no_text_available(mock_encoder):
+    """Weight > 0 but no resolvable text → component is silently omitted."""
+    from embedding_art.core.loss import CompositeLoss
+
+    # mock_encoder has no encode_text by default — but more importantly,
+    # there's no anchor text to resolve.
+    config = LossConfig(similarity_weight=1.0, text_anchor_weight=0.5)
+    loss_fn = CompositeLoss(config, mock_encoder)
+    target = _make_concept(seed=14)
+    # No source string on the concept.
+    current_output = torch.randn(1, 3, 64, 64)
+    breakdown = loss_fn(current_output, target, mock_encoder)
+    assert "text_anchor" not in breakdown.components

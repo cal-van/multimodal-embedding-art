@@ -49,6 +49,14 @@ class LossConfig:
     feature_matching_layers: list[int] | str = "every_4th"
     sae_feature_weight: float = 0.0
     sae_target_features: dict[str, float] | None = None
+    # Text-anchor auxiliary loss (M4): when > 0 and either text_anchor_text
+    # is set or the target concept carries a string source, the loss adds a
+    # cosine-distance term pulling the current optimisation embedding toward
+    # the encoder's text projection of that string. Exploits LanguageBind's
+    # text-as-anchor design so that even image / audio / video targets get a
+    # language-flavoured supervision signal.
+    text_anchor_weight: float = 0.0
+    text_anchor_text: str | None = None
     # Optional regularizer; typed as Any to avoid a circular import with
     # embedding_art.regularizers.  Pass a CompositeRegularizer (or any callable
     # matching the Regularizer protocol) here if regularization is desired.

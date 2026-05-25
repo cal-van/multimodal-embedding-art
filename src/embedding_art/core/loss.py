@@ -50,6 +50,9 @@ class CompositeLoss:
         self.sae = sae
         self.stats_extractor = self._select_extractor(encoder)
         self.reference_stats: dict[int, FeatureStatistics] | None = None
+        # Cached text-anchor embedding (computed lazily on first call).
+        self._text_anchor_embedding: torch.Tensor | None = None
+        self._text_anchor_source: str | None = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -69,6 +72,43 @@ class CompositeLoss:
         if EncoderCapability.MULTI_LAYER_FEATURES in encoder.card.capabilities:
             return ViTStatisticsExtractor()
         return None
+
+    def _resolve_anchor_text(self, target: Concept) -> str | None:
+        """Return the text to use for the text-anchor auxiliary loss.
+
+        Precedence: ``config.text_anchor_text`` wins; otherwise we fall
+        back to a string ``source`` on the target Concept (e.g. when the
+        concept was created via ``Concept.from_text("storm")``).
+        """
+        if self.config.text_anchor_text:
+            return self.config.text_anchor_text
+        source = getattr(target, "source", None)
+        if isinstance(source, str) and source.strip():
+            return source.strip()
+        return None
+
+    def _get_text_anchor_embedding(self, encoder, anchor_text: str | None) -> torch.Tensor | None:
+        """Encode ``anchor_text`` to its text-projection embedding.
+
+        Cached per CompositeLoss instance to avoid re-encoding the same
+        string on every step. Returns ``None`` when no text could be
+        derived or the encoder lacks ``encode_text``.
+        """
+        if not anchor_text:
+            return None
+        if self._text_anchor_embedding is not None and self._text_anchor_source == anchor_text:
+            return self._text_anchor_embedding
+        if not hasattr(encoder, "encode_text"):
+            return None
+        try:
+            with torch.no_grad():
+                emb = encoder.encode_text(anchor_text).detach()
+        except Exception as exc:
+            logger.warning("text-anchor encoding failed for %r: %s", anchor_text, exc)
+            return None
+        self._text_anchor_embedding = emb
+        self._text_anchor_source = anchor_text
+        return emb
 
     @staticmethod
     def _encode(encoder, tensor: torch.Tensor) -> torch.Tensor:
@@ -162,7 +202,17 @@ class CompositeLoss:
                 * self.config.sae_feature_weight
             )
 
-        # 4. Regularization (uses existing regularizer system).
+        # 4. Text-anchor auxiliary loss (M4).
+        if self.config.text_anchor_weight > 0:
+            anchor_text = self._resolve_anchor_text(target)
+            anchor_emb = self._get_text_anchor_embedding(encoder, anchor_text)
+            if anchor_emb is not None:
+                anchor_sim = F.cosine_similarity(
+                    current_emb, anchor_emb.to(current_emb.device), dim=-1
+                ).mean()
+                components["text_anchor"] = -anchor_sim * self.config.text_anchor_weight
+
+        # 5. Regularization (uses existing regularizer system).
         if self.config.regularization is not None and latent is not None:
             components["regularization"] = self.config.regularization(latent, current_output)
 
