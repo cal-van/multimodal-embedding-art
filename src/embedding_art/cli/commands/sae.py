@@ -381,6 +381,147 @@ def label(ctx: click.Context, model_path, encoder):
 
 
 # ---------------------------------------------------------------------------
+# sae auto-label
+# ---------------------------------------------------------------------------
+
+
+@sae.command("auto-label")
+@click.option(
+    "--model",
+    "model_path",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to a trained SAE checkpoint directory or weights file.",
+)
+@click.option(
+    "--encoder",
+    type=str,
+    default="languagebind",
+    show_default=True,
+    help="Encoder used to embed the labelling vocabulary.",
+)
+@click.option(
+    "--device",
+    type=str,
+    default="mps",
+    show_default=True,
+    help="Torch device for encoding vocabulary words.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help=(
+        "Destination JSON file (defaults to feature_labels.json next to the SAE). "
+        "This is the file the showcase command auto-loads."
+    ),
+)
+@click.option(
+    "--use-vlm/--no-vlm",
+    default=False,
+    show_default=True,
+    help=(
+        "Use the optional VLM labeller (requires --vlm-adapter or the "
+        "ANTHROPIC_API_KEY env var). Falls back to cosine labels per-feature "
+        "on any failure."
+    ),
+)
+@click.pass_context
+def auto_label(
+    ctx: click.Context,
+    model_path: str,
+    encoder: str,
+    device: str,
+    output_path: str | None,
+    use_vlm: bool,
+) -> None:
+    """Generate feature_labels.json non-interactively.
+
+    Uses :class:`~embedding_art.sae.labelling.CosineLabeller` by default;
+    pass --use-vlm to opt into :class:`VLMLabeller` (with a graceful
+    fallback to cosine labels per-feature on any LLM failure).
+    """
+    debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
+    try:
+        import json
+
+        from embedding_art.encoders.defaults import create_default_registry
+        from embedding_art.sae.labelling import CosineLabeller, VLMLabeller
+
+        sae_path = Path(model_path)
+        registry = create_default_registry()
+        encoder_instance = registry.load(encoder, device=device)
+
+        labeller: object
+        if use_vlm:
+            llm_callable = _resolve_vlm_callable()
+            if llm_callable is None:
+                console.print(
+                    "[yellow]No VLM adapter resolved (ANTHROPIC_API_KEY missing). "
+                    "Falling back to cosine labeller.[/yellow]"
+                )
+                labeller = CosineLabeller()
+            else:
+                labeller = VLMLabeller(llm_callable=llm_callable)
+        else:
+            labeller = CosineLabeller()
+
+        labels = labeller.label_all(sae_path=sae_path, encoder=encoder_instance)
+
+        if output_path is None:
+            target = (
+                sae_path / "feature_labels.json"
+                if sae_path.is_dir()
+                else sae_path.parent / "feature_labels.json"
+            )
+        else:
+            target = Path(output_path)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({i: label for i, label in enumerate(labels)}, indent=2))
+        console.print(f"[bold green]Wrote {len(labels)} feature labels to {target}[/bold green]")
+
+    except Exception as e:
+        handle_exception(e, debug_mode)
+        sys.exit(1)
+
+
+def _resolve_vlm_callable() -> object | None:
+    """Try to construct a default Anthropic-backed VLM callable.
+
+    Returns ``None`` if the ``anthropic`` package isn't installed or the
+    ``ANTHROPIC_API_KEY`` env var isn't set — keeping the optional
+    dependency truly optional.
+    """
+    import os
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+
+    try:
+        import anthropic
+    except ImportError:
+        return None
+
+    client = anthropic.Anthropic()
+
+    def adapter(prompt: str) -> str:
+        msg = client.messages.create(
+            model="claude-3-5-sonnet-latest",
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        # Defensive: extract the first text block.
+        for block in msg.content:
+            if getattr(block, "type", None) == "text":
+                return block.text
+        return ""
+
+    return adapter
+
+
+# ---------------------------------------------------------------------------
 # sae inspect
 # ---------------------------------------------------------------------------
 
