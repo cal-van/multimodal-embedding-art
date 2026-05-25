@@ -22,6 +22,11 @@ export function Sidebar() {
                         + Single-modality
                     </button>
                 </Link>
+                <Link to="/anchor-compare">
+                    <button className={`w-full text-left ${isActive('/anchor-compare') ? 'bg-[#27272a]' : ''}`}>
+                        🧭 Anchor Compare
+                    </button>
+                </Link>
 
                 <div className="h-px bg-[#27272a] my-2" />
 

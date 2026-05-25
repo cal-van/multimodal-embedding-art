@@ -61,6 +61,20 @@ export interface ShowcaseModalityRender {
   [key: string]: unknown;
 }
 
+export interface AnchorCompareTextEntry {
+  label: string;
+  text: string;
+  embedding_dim: number;
+  text_anchor: Array<{ word: string; similarity: number }>;
+}
+
+export interface AnchorCompareResponse {
+  concept_label: string;
+  encoder: string;
+  entries: AnchorCompareTextEntry[];
+  cosine_matrix: Record<string, Record<string, number>>;
+}
+
 export const api = {
   createJob: async (targetText: string[], outputModality: string = 'image'): Promise<Job> => {
     const res = await fetch(`${API_BASE}/jobs/`, {
@@ -100,6 +114,24 @@ export const api = {
   fetchShowcaseManifest: async (manifestUrl: string): Promise<ShowcaseManifest> => {
     const res = await fetch(`${API_BASE}${manifestUrl}`);
     if (!res.ok) throw new Error(`Failed to fetch manifest at ${manifestUrl}`);
+    return res.json();
+  },
+
+  anchorCompare: async (request: {
+    concept_label: string;
+    texts: string[];
+    encoder?: string;
+    top_k_text?: number;
+  }): Promise<AnchorCompareResponse> => {
+    const res = await fetch(`${API_BASE}/experiments/anchor-compare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`anchor-compare failed: ${detail}`);
+    }
     return res.json();
   },
 

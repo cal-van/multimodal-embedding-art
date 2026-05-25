@@ -1,13 +1,13 @@
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from rich.console import Console
 
-from embedding_art.web.routes import jobs
+from embedding_art.web.routes import experiments, jobs
 
 console = Console()
 
@@ -45,6 +45,7 @@ app.add_middleware(
 )
 
 app.include_router(jobs.router)
+app.include_router(experiments.router)
 
 # Ensure outputs directory exists
 OUTPUTS_DIR = os.path.join(os.getcwd(), "outputs")
