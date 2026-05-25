@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
+import pytest
 import torch
 
 from embedding_art.interpretation import (
@@ -22,6 +23,23 @@ from embedding_art.interpretation import (
 # ---------------------------------------------------------------------------
 # Fake encoder
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_text_anchor_disk_cache(tmp_path, monkeypatch):
+    """Every test in this file gets a fresh disk cache directory.
+
+    Without this, the text-anchor disk cache leaks across pytest invocations
+    (and pollutes the user's ``~/.cache/``), causing flaky failures when a
+    cached vocab tensor encoded with one Python hash seed gets compared to
+    a target encoded with a different hash seed.
+    """
+    from embedding_art.interpretation import text_anchor as ta_mod
+
+    monkeypatch.setenv("EMBEDDING_ART_TEXT_ANCHOR_CACHE", str(tmp_path / "text_anchor_cache"))
+    ta_mod._VOCAB_CACHE.clear()
+    yield
+    ta_mod._VOCAB_CACHE.clear()
 
 
 @dataclass
@@ -98,6 +116,74 @@ class TestTextAnchorReadout:
         encoder = _FakeEncoder()
         embedding = torch.randn(32)
         result = text_anchor_readout(embedding, encoder, vocab=["dog", "cat"], top_k=2)
+        assert len(result) == 2
+
+
+class TestTextAnchorCaching:
+    """The text-anchor readout uses encode_text_batch when available and
+    populates a disk cache for repeated runs."""
+
+    def test_batch_encoder_is_preferred(self, tmp_path, monkeypatch) -> None:
+        """When the encoder exposes ``encode_text_batch`` it should be called
+        instead of looping ``encode_text``."""
+        monkeypatch.setenv("EMBEDDING_ART_TEXT_ANCHOR_CACHE", str(tmp_path))
+        # Force a fresh cache for this encoder class.
+        from embedding_art.interpretation import text_anchor as ta_mod
+
+        ta_mod._VOCAB_CACHE.clear()
+
+        class _BatchableEncoder(_FakeEncoder):
+            batch_calls: int = 0
+
+            def encode_text_batch(self, texts: list[str]) -> torch.Tensor:
+                type(self).batch_calls += 1
+                return torch.stack([self.encode_text(w).squeeze(0) for w in texts], dim=0)
+
+        encoder = _BatchableEncoder()
+        text_anchor_readout(torch.randn(1, 32), encoder, vocab=["a", "b", "c"], top_k=2)
+        assert _BatchableEncoder.batch_calls == 1
+
+    def test_disk_cache_populated_and_reused(self, tmp_path, monkeypatch) -> None:
+        """Second call resolves through the disk cache (no encoder calls)."""
+        monkeypatch.setenv("EMBEDDING_ART_TEXT_ANCHOR_CACHE", str(tmp_path))
+        from embedding_art.interpretation import text_anchor as ta_mod
+
+        ta_mod._VOCAB_CACHE.clear()
+
+        class _CountingEncoder(_FakeEncoder):
+            text_calls: int = 0
+
+            def encode_text(self, word: str) -> torch.Tensor:
+                type(self).text_calls += 1
+                return super().encode_text(word)
+
+        vocab = ["alpha", "beta", "gamma"]
+        encoder1 = _CountingEncoder()
+        text_anchor_readout(torch.randn(1, 32), encoder1, vocab=vocab, top_k=2)
+        first_call_count = _CountingEncoder.text_calls
+        assert first_call_count >= len(vocab)
+
+        # New encoder *instance* of the same class — disk cache should hit.
+        ta_mod._VOCAB_CACHE.clear()
+        encoder2 = _CountingEncoder()
+        text_anchor_readout(torch.randn(1, 32), encoder2, vocab=vocab, top_k=2)
+        assert (
+            _CountingEncoder.text_calls == first_call_count
+        ), "Disk cache should have prevented additional encode_text calls."
+
+    def test_fallback_when_batch_raises(self, tmp_path, monkeypatch) -> None:
+        """If ``encode_text_batch`` raises we fall back to per-word."""
+        monkeypatch.setenv("EMBEDDING_ART_TEXT_ANCHOR_CACHE", str(tmp_path))
+        from embedding_art.interpretation import text_anchor as ta_mod
+
+        ta_mod._VOCAB_CACHE.clear()
+
+        class _BrokenBatchEncoder(_FakeEncoder):
+            def encode_text_batch(self, texts: list[str]) -> torch.Tensor:
+                raise RuntimeError("batch path is broken")
+
+        encoder = _BrokenBatchEncoder()
+        result = text_anchor_readout(torch.randn(1, 32), encoder, vocab=["x", "y"], top_k=2)
         assert len(result) == 2
 
 

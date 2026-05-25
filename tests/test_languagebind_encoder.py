@@ -203,6 +203,25 @@ class TestLanguageBindEncoderText:
         norm = torch.norm(embedding, dim=-1)
         assert torch.allclose(norm, torch.ones_like(norm), atol=1e-4)
 
+    def test_encode_text_batch_returns_n_by_d(self, encoder: LanguageBindEncoder) -> None:
+        out = encoder.encode_text_batch(["dog", "cat", "bird"])
+        assert out.shape == (3, EMBEDDING_DIM)
+        norms = torch.norm(out, dim=-1)
+        assert torch.allclose(norms, torch.ones_like(norms), atol=1e-4)
+
+    def test_encode_text_batch_matches_encode_text(self, encoder: LanguageBindEncoder) -> None:
+        """Batch path produces the same embeddings as the per-word path."""
+        words = ["dog", "cat"]
+        per_word = torch.cat([encoder.encode_text(w) for w in words], dim=0)
+        batched = encoder.encode_text_batch(words)
+        # Cosine similarity should be ~1 between equivalent paths.
+        sim = (per_word * batched).sum(dim=-1)
+        assert torch.all(sim > 0.999)
+
+    def test_encode_text_batch_empty_input(self, encoder: LanguageBindEncoder) -> None:
+        out = encoder.encode_text_batch([])
+        assert out.shape == (0, EMBEDDING_DIM)
+
 
 @pytest.mark.slow
 class TestLanguageBindEncoderCrossModal:

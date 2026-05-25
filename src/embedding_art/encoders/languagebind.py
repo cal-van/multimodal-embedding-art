@@ -309,6 +309,58 @@ class LanguageBindEncoder:
         except Exception as e:
             raise EncoderError("text", e) from e
 
+    def encode_text_batch(self, texts: list[str], batch_size: int = 128) -> torch.Tensor:
+        """Batch-encode a list of texts to a ``[N, 768]`` unit-normalised tensor.
+
+        Materially faster than calling :meth:`encode_text` in a Python loop:
+        the tokenizer batches and the transformer forward sees the whole
+        batch at once. For the 1500-word text-anchor vocabulary this is the
+        difference between ~30 s and ~1 s on M1 Max.
+
+        Args:
+            texts: Input strings; each truncated to 77 tokens.
+            batch_size: Forward-pass chunk size. ``128`` keeps memory bounded
+                even on M1 Max without sacrificing throughput. Set lower if
+                memory pressure surfaces.
+
+        Returns:
+            Float tensor of shape ``[len(texts), 768]``.
+
+        Raises:
+            EncoderError: On any tokenisation or forward-pass failure.
+        """
+        if not texts:
+            return torch.empty(0, EMBEDDING_DIM, device=self._device)
+
+        if not self._modality_models:
+            self._load_modality("image")
+        modality_key = next(iter(self._modality_models))
+        model = self._modality_models[modality_key]["model"]
+
+        outputs: list[torch.Tensor] = []
+        try:
+            for start in range(0, len(texts), batch_size):
+                chunk = texts[start : start + batch_size]
+                inputs = self._tokenizer(
+                    chunk,
+                    max_length=_TOKEN_MAX_LENGTH,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt",
+                ).to(self._device)
+                with torch.no_grad():
+                    text_outputs = model.text_model(**inputs)
+                    pooled = (
+                        text_outputs[1]
+                        if isinstance(text_outputs, tuple)
+                        else text_outputs.pooler_output
+                    )
+                    projected = model.text_projection(pooled)
+                outputs.append(F.normalize(projected, dim=-1))
+        except Exception as e:
+            raise EncoderError("text-batch", e) from e
+        return torch.cat(outputs, dim=0)
+
     def encode_image(self, image: Path | Image.Image | torch.Tensor) -> torch.Tensor:
         """Encode an image to a unit-normalised ``[1, 768]`` embedding.
 
