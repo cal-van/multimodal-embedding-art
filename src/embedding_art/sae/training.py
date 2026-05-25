@@ -614,6 +614,168 @@ def train_sae(
 
 
 # ---------------------------------------------------------------------------
+# Stage 3b: Matryoshka SAE training pipeline
+# ---------------------------------------------------------------------------
+
+
+def train_matryoshka_sae_pipeline(
+    embeddings_path: Path | str,
+    output_path: Path | str,
+    embed_dim: int,
+    *,
+    nested_sizes: tuple[int, ...] | list[int] = (1024, 4096, 16384),
+    k: int = 32,
+    batch_size: int = 128,
+    n_iterations: int = 25000,
+    lr: float = 1e-3,
+    log_every: int = 1000,
+) -> Any:
+    """
+    Train a :class:`MatryoshkaSAE` on a pre-collected embeddings file.
+
+    The Matryoshka SAE produces nested-prefix sparse activations:
+    ``[0:n_1] ⊂ [0:n_2] ⊂ ... ⊂ [0:n_K]`` are all valid sub-decompositions
+    on the same checkpoint. This Pareto-dominates a plain SAE at any
+    fixed width <= ``nested_sizes[-1]`` and lets inference pick a width
+    on the fly.
+
+    Parameters
+    ----------
+    embeddings_path:
+        Path to the ``.pt`` file from :func:`collect_embeddings`. Must
+        contain an ``"embeddings"`` key with a ``[N, embed_dim]`` tensor.
+    output_path:
+        Directory where the trained SAE is saved. Produces:
+        * ``sae_weights.pt`` — full state dict (W_enc, W_dec, bias).
+        * ``sae_meta.json`` — ``{"kind": "matryoshka", "nested_sizes":
+          [...], "k": ..., "embed_dim": ...}``. Consumers detect the
+          Matryoshka kind via this file and reconstruct the right class
+          when loading.
+    embed_dim:
+        Dimensionality of the input embeddings.
+    nested_sizes:
+        Strictly-increasing list of nest widths. The largest entry is
+        the full feature count. Every entry must be >= ``k``.
+    k:
+        TopK sparsity applied within each nest.
+    batch_size, n_iterations, lr:
+        Standard hyperparameters; defaults mirror :func:`train_sae`.
+    log_every:
+        Iterations between progress log lines.
+
+    Returns
+    -------
+    MatryoshkaSAE
+        The trained module (also saved to ``output_path``).
+    """
+    import json  # local: keep top of file free of stdlib churn
+
+    from embedding_art.sae.matryoshka import MatryoshkaSAE  # local: avoid cycle
+
+    embeddings_path = Path(embeddings_path)
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    data = torch.load(embeddings_path, weights_only=True)
+    embeddings: torch.Tensor = data["embeddings"].float()
+
+    if embeddings.shape[1] != embed_dim:
+        raise ValueError(
+            f"embed_dim mismatch: file has {embeddings.shape[1]}-d embeddings, "
+            f"but embed_dim={embed_dim} was specified."
+        )
+
+    nested = tuple(int(n) for n in nested_sizes)
+    logger.info(
+        "Training Matryoshka SAE: %d samples, embed_dim=%d, nested_sizes=%s, k=%d",
+        embeddings.shape[0],
+        embed_dim,
+        nested,
+        k,
+    )
+
+    sae = MatryoshkaSAE(embed_dim=embed_dim, nested_sizes=nested, k=k)
+    optimizer = torch.optim.Adam(sae.parameters(), lr=lr)
+    sae.train()
+
+    n_samples = embeddings.shape[0]
+    for iteration in range(n_iterations):
+        indices = torch.randint(0, n_samples, (min(batch_size, n_samples),))
+        batch = embeddings[indices]
+
+        loss = sae.matryoshka_loss(batch)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        sae.normalize_decoder()
+
+        if (iteration + 1) % log_every == 0:
+            logger.info("iter %d/%d  loss=%.4f", iteration + 1, n_iterations, float(loss.item()))
+
+    sae.eval()
+
+    weights_path = output_path / "sae_weights.pt"
+    torch.save(sae.state_dict(), weights_path)
+    logger.info("Saved Matryoshka SAE weights to %s", weights_path)
+
+    meta_path = output_path / "sae_meta.json"
+    meta = {
+        "kind": "matryoshka",
+        "embed_dim": embed_dim,
+        "n_features": sae.n_features,
+        "nested_sizes": list(nested),
+        "k": k,
+    }
+    meta_path.write_text(json.dumps(meta, indent=2))
+    logger.info("Saved Matryoshka SAE meta to %s", meta_path)
+
+    return sae
+
+
+def load_sae_from_dir(output_path: Path | str) -> Any:
+    """Load a trained SAE checkpoint, detecting the kind from sae_meta.json.
+
+    Returns a :class:`MatryoshkaSAE` when ``sae_meta.json`` reports
+    ``kind == "matryoshka"``; otherwise a :class:`GroupSparseSAE`.
+    """
+    import json
+
+    output_path = Path(output_path)
+    meta_path = output_path / "sae_meta.json"
+    weights_path = output_path / "sae_weights.pt"
+    if not weights_path.exists():
+        raise FileNotFoundError(f"SAE weights file not found: {weights_path}")
+
+    state = torch.load(weights_path, weights_only=True, map_location="cpu")
+
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+        if meta.get("kind") == "matryoshka":
+            from embedding_art.sae.matryoshka import MatryoshkaSAE
+
+            sae = MatryoshkaSAE(
+                embed_dim=int(meta["embed_dim"]),
+                nested_sizes=list(meta["nested_sizes"]),
+                k=int(meta["k"]),
+            )
+            sae.load_state_dict(state)
+            sae.eval()
+            return sae
+
+    # GroupSparseSAE fallback: infer embed_dim + n_features from W_enc.
+    # k is a runtime knob, not part of the checkpoint; pick a placeholder
+    # consistent with the v3 defaults so callers that don't override it
+    # still get a usable SAE.
+    W_enc = state["W_enc"]  # noqa: N806 — matches the file-wide W_enc naming convention
+    n_features, embed_dim = W_enc.shape
+    sae = GroupSparseSAE(embed_dim=embed_dim, n_features=n_features, k=32)
+    sae.load_state_dict(state)
+    sae.eval()
+    return sae
+
+
+# ---------------------------------------------------------------------------
 # Stage 4: Label features
 # ---------------------------------------------------------------------------
 

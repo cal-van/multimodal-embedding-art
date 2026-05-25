@@ -222,8 +222,37 @@ def collect_multimodal(
     "Apple's MLX framework (~2-3x throughput on M1/M2 Max; macOS only). "
     "'auto' picks mlx when available, otherwise torch.",
 )
+@click.option(
+    "--sae-type",
+    type=click.Choice(["groupsparse", "matryoshka"]),
+    default="groupsparse",
+    show_default=True,
+    help="SAE flavor. 'groupsparse' is the canonical TopK + group-sparse loss "
+    "path. 'matryoshka' trains a nested-prefix SAE that Pareto-dominates a "
+    "plain SAE at any width <= the largest nest, and lets inference pick a "
+    "width on the fly.",
+)
+@click.option(
+    "--nested-sizes",
+    type=str,
+    default="1024,4096,16384",
+    show_default=True,
+    help="Comma-separated strictly-increasing nest widths for Matryoshka. "
+    "Largest entry is the full feature count; --features is ignored for "
+    "this SAE type.",
+)
 @click.pass_context
-def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, lambda_, backend):
+def train(
+    ctx: click.Context,
+    embeddings_path,
+    output_path,
+    features,
+    sparsity,
+    lambda_,
+    backend,
+    sae_type,
+    nested_sizes,
+):
     """Train a Sparse Autoencoder on collected embeddings."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
 
@@ -245,14 +274,39 @@ def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, 
             n_samples = data.shape[0]
 
         chosen_backend = _resolve_backend(backend)
-        console.print(
-            f"[bold]Training SAE (backend={chosen_backend}): {embed_dim}d → {features} "
-            f"features (λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
-        )
 
-        if chosen_backend == "mlx":
+        if sae_type == "matryoshka":
+            if chosen_backend == "mlx":
+                console.print(
+                    "[yellow]MLX backend not yet supported for Matryoshka; "
+                    "falling back to the torch path.[/yellow]"
+                )
+            from embedding_art.sae.training import train_matryoshka_sae_pipeline
+
+            try:
+                nested = tuple(int(s.strip()) for s in nested_sizes.split(",") if s.strip())
+            except ValueError as exc:
+                raise click.UsageError(
+                    f"--nested-sizes must be comma-separated ints, got {nested_sizes!r}"
+                ) from exc
+            console.print(
+                f"[bold]Training Matryoshka SAE: {embed_dim}d → nests={nested} "
+                f"(TopK-{sparsity}) on {n_samples} samples[/bold]"
+            )
+            train_matryoshka_sae_pipeline(
+                embeddings_path=embeddings_path,
+                output_path=output_path,
+                embed_dim=embed_dim,
+                nested_sizes=nested,
+                k=sparsity,
+            )
+        elif chosen_backend == "mlx":
             from embedding_art.sae.mlx_training import train_sae_mlx
 
+            console.print(
+                f"[bold]Training SAE (backend={chosen_backend}): {embed_dim}d → {features} "
+                f"features (λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
+            )
             train_sae_mlx(
                 embeddings_path=embeddings_path,
                 output_path=output_path,
@@ -262,6 +316,10 @@ def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, 
                 lambda_gs=lambda_,
             )
         else:
+            console.print(
+                f"[bold]Training SAE (backend={chosen_backend}): {embed_dim}d → {features} "
+                f"features (λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
+            )
             train_sae(
                 embeddings_path=embeddings_path,
                 output_path=output_path,

@@ -96,3 +96,184 @@ class TestMatryoshkaSAEDecoderNorm:
         sae.normalize_decoder()
         norms = sae.W_dec.norm(dim=0)
         assert torch.allclose(norms, torch.ones_like(norms), atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline + CLI integration
+# ---------------------------------------------------------------------------
+
+
+class TestMatryoshkaTrainingPipeline:
+    """Cover the production-grade ``train_matryoshka_sae_pipeline``."""
+
+    def _write_embeddings(self, tmp_path, embed_dim: int = 16, n_samples: int = 64):
+        path = tmp_path / "embeddings.pt"
+        torch.manual_seed(0)
+        torch.save({"embeddings": torch.randn(n_samples, embed_dim)}, path)
+        return path
+
+    def test_pipeline_saves_weights_and_meta(self, tmp_path) -> None:
+        from embedding_art.sae.training import train_matryoshka_sae_pipeline
+
+        embeddings_path = self._write_embeddings(tmp_path)
+        output_dir = tmp_path / "sae"
+        train_matryoshka_sae_pipeline(
+            embeddings_path=embeddings_path,
+            output_path=output_dir,
+            embed_dim=16,
+            nested_sizes=(4, 8, 16),
+            k=2,
+            n_iterations=4,
+            batch_size=8,
+            log_every=10_000,
+        )
+        assert (output_dir / "sae_weights.pt").exists()
+        meta_path = output_dir / "sae_meta.json"
+        assert meta_path.exists()
+
+        import json
+
+        meta = json.loads(meta_path.read_text())
+        assert meta["kind"] == "matryoshka"
+        assert meta["nested_sizes"] == [4, 8, 16]
+        assert meta["k"] == 2
+        assert meta["embed_dim"] == 16
+        assert meta["n_features"] == 16
+
+    def test_pipeline_rejects_embed_dim_mismatch(self, tmp_path) -> None:
+        from embedding_art.sae.training import train_matryoshka_sae_pipeline
+
+        embeddings_path = self._write_embeddings(tmp_path, embed_dim=16)
+        with pytest.raises(ValueError, match="embed_dim mismatch"):
+            train_matryoshka_sae_pipeline(
+                embeddings_path=embeddings_path,
+                output_path=tmp_path / "sae",
+                embed_dim=32,
+                nested_sizes=(4, 8),
+                k=2,
+                n_iterations=1,
+            )
+
+    def test_load_sae_from_dir_round_trips_matryoshka(self, tmp_path) -> None:
+        from embedding_art.sae.matryoshka import MatryoshkaSAE
+        from embedding_art.sae.training import (
+            load_sae_from_dir,
+            train_matryoshka_sae_pipeline,
+        )
+
+        embeddings_path = self._write_embeddings(tmp_path)
+        output_dir = tmp_path / "sae"
+        train_matryoshka_sae_pipeline(
+            embeddings_path=embeddings_path,
+            output_path=output_dir,
+            embed_dim=16,
+            nested_sizes=(4, 8, 16),
+            k=2,
+            n_iterations=4,
+            batch_size=8,
+            log_every=10_000,
+        )
+        loaded = load_sae_from_dir(output_dir)
+        assert isinstance(loaded, MatryoshkaSAE)
+        assert loaded.nested_sizes == [4, 8, 16]
+        assert loaded.k == 2
+
+    def test_load_sae_from_dir_falls_back_to_groupsparse(self, tmp_path) -> None:
+        """Older sae_weights.pt without sae_meta.json should still load."""
+        from embedding_art.sae.training import (
+            GroupSparseSAE,
+            load_sae_from_dir,
+            train_sae,
+        )
+
+        embeddings_path = self._write_embeddings(tmp_path)
+        output_dir = tmp_path / "sae"
+        train_sae(
+            embeddings_path=embeddings_path,
+            output_path=output_dir,
+            embed_dim=16,
+            n_features=16,
+            k=2,
+            n_iterations=4,
+            batch_size=8,
+        )
+        # No sae_meta.json was written by train_sae — that's the v3 layout.
+        assert not (output_dir / "sae_meta.json").exists()
+        loaded = load_sae_from_dir(output_dir)
+        assert isinstance(loaded, GroupSparseSAE)
+
+
+class TestMatryoshkaCLIWiring:
+    """``embed-art sae train --sae-type matryoshka`` dispatch."""
+
+    def test_cli_dispatches_to_matryoshka_pipeline(self, tmp_path, monkeypatch) -> None:
+        """The CLI parses ``--sae-type matryoshka`` and forwards the right args.
+
+        We patch the pipeline entry point so the test stays fast — the
+        actual training loop is covered above by
+        :class:`TestMatryoshkaTrainingPipeline`.
+        """
+        from click.testing import CliRunner
+
+        from embedding_art.cli.commands.sae import train as train_cli
+
+        embeddings_path = tmp_path / "embeddings.pt"
+        torch.save({"embeddings": torch.randn(8, 16)}, embeddings_path)
+
+        captured: dict = {}
+
+        def fake_pipeline(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(
+            "embedding_art.sae.training.train_matryoshka_sae_pipeline",
+            fake_pipeline,
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            train_cli,
+            [
+                "--embeddings",
+                str(embeddings_path),
+                "--output",
+                str(tmp_path / "sae"),
+                "--sae-type",
+                "matryoshka",
+                "--nested-sizes",
+                "4,8",
+                "--sparsity",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["nested_sizes"] == (4, 8)
+        assert captured["k"] == 2
+        assert captured["embed_dim"] == 16
+
+    def test_cli_rejects_bad_nested_sizes(self, tmp_path) -> None:
+        from click.testing import CliRunner
+
+        from embedding_art.cli.commands.sae import train as train_cli
+
+        embeddings_path = tmp_path / "embeddings.pt"
+        torch.save({"embeddings": torch.randn(8, 16)}, embeddings_path)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            train_cli,
+            [
+                "--embeddings",
+                str(embeddings_path),
+                "--output",
+                str(tmp_path / "sae"),
+                "--sae-type",
+                "matryoshka",
+                "--nested-sizes",
+                "not-an-int",
+                "--sparsity",
+                "2",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "nested-sizes" in result.output.lower() or "not-an-int" in result.output
