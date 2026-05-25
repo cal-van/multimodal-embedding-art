@@ -76,16 +76,39 @@ class JobStatus(str, Enum):
 
 @dataclass
 class Job:
-    """Represents an optimization job."""
+    """Represents an optimization job.
+
+    Three ``kind`` values are supported:
+
+    * ``"single"`` (default) — a single-modality optimisation job.
+    * ``"compare"`` — same concept across multiple encoders.
+    * ``"showcase"`` — v3 four-modality bundle in a single shared
+      encoder space; writes a directory of artefacts and a manifest.
+    """
 
     id: str
     target_text: list[str] = field(default_factory=list)
     output_modality: str = "image"
-    encoder_name: str = "imagebind"
+    encoder_name: str = "languagebind"
     similarity_weight: float = 1.0
     feature_matching_weight: float = 0.5
     # For compare jobs: list of encoder names to compare
     compare_encoder_names: list[str] = field(default_factory=list)
+    # For showcase jobs.
+    kind: str = "single"
+    modalities: list[str] = field(default_factory=lambda: ["image", "audio", "video", "text"])
+    image_backbone: str = "sd35"
+    audio_backbone: str = "stable-audio-open"
+    video_backbone: str = "ltx-video"
+    tracks: list[str] = field(default_factory=lambda: ["honest"])
+    autocast_dtype: str = "fp32"
+    interpret: bool = True
+    evaluate: bool = True
+    sae_path: str | None = None
+    showcase_steps: int = 200
+    seed: int | None = None
+    manifest_path: str | None = None
+    output_dir: str | None = None
     status: JobStatus = JobStatus.QUEUED
     created_at: datetime = field(default_factory=datetime.now)
     progress: float = 0.0
@@ -135,8 +158,51 @@ class JobManager:
             id=job_id,
             target_text=[target_text],
             output_modality=output_modality,
-            encoder_name=encoder_names[0] if encoder_names else "imagebind",
+            encoder_name=encoder_names[0] if encoder_names else "languagebind",
             compare_encoder_names=encoder_names or [],
+            kind="compare",
+        )
+        self._jobs[job_id] = job
+        return job
+
+    def create_showcase_job(
+        self,
+        target_text: str,
+        modalities: list[str] | None = None,
+        encoder_name: str = "languagebind",
+        image_backbone: str = "sd35",
+        audio_backbone: str = "stable-audio-open",
+        video_backbone: str = "ltx-video",
+        tracks: list[str] | None = None,
+        autocast_dtype: str = "fp32",
+        interpret: bool = True,
+        evaluate: bool = True,
+        sae_path: str | None = None,
+        steps: int = 200,
+        seed: int | None = None,
+    ) -> Job:
+        """Create a v3 four-modality showcase job.
+
+        Writes its output bundle to ``outputs/showcase/<job_id>/`` and
+        records the manifest URL on the job.
+        """
+        job_id = str(uuid.uuid4())
+        job = Job(
+            id=job_id,
+            target_text=[target_text],
+            kind="showcase",
+            modalities=list(modalities) if modalities else ["image", "audio", "video", "text"],
+            encoder_name=encoder_name,
+            image_backbone=image_backbone,
+            audio_backbone=audio_backbone,
+            video_backbone=video_backbone,
+            tracks=list(tracks) if tracks else ["honest"],
+            autocast_dtype=autocast_dtype,
+            interpret=interpret,
+            evaluate=evaluate,
+            sae_path=sae_path,
+            showcase_steps=steps,
+            seed=seed,
         )
         self._jobs[job_id] = job
         return job
@@ -183,8 +249,13 @@ def _run_job_sync_direct(
     """
     try:
         job.status = JobStatus.RUNNING
-        job.logs.append("Initializing engine...")
         broadcast({"type": "status", "status": "running"})
+
+        if job.kind == "showcase":
+            _run_showcase_job(job, broadcast)
+            return
+
+        job.logs.append("Initializing engine...")
         broadcast({"type": "log", "message": "Initializing engine..."})
 
         engine = get_engine()
@@ -336,6 +407,68 @@ def _broadcast_progress(
             "log": msg,
         }
     )
+
+
+def _run_showcase_job(job: Job, broadcast: Callable[[dict], None]) -> None:
+    """Execute a v3 four-modality showcase job in-process.
+
+    The work is delegated to ``embedding_art.cli.commands.showcase._showcase_impl``
+    so the HTTP and CLI surfaces stay in lockstep. The manifest URL is
+    written back to ``job.manifest_path`` / ``job.result_path`` once the
+    bundle is on disk.
+    """
+    try:
+        from pathlib import Path
+
+        from embedding_art.cli.commands.showcase import _showcase_impl
+
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        outputs_dir = os.path.join(os.getcwd(), "outputs", "showcase", job.id)
+        Path(outputs_dir).mkdir(parents=True, exist_ok=True)
+
+        target = job.target_text[0]
+        job.logs.append(f"Rendering showcase for '{target}' to {outputs_dir}")
+        broadcast({"type": "log", "message": f"Rendering showcase for '{target}'"})
+
+        _showcase_impl(
+            target_text=target,
+            output_dir=Path(outputs_dir),
+            encoder_name=job.encoder_name,
+            modalities=job.modalities,
+            steps=job.showcase_steps,
+            seed=job.seed,
+            device=device,
+            image_backbone=job.image_backbone,
+            audio_backbone=job.audio_backbone,
+            video_backbone=job.video_backbone,
+            tracks=job.tracks,
+            autocast_dtype=job.autocast_dtype,
+            interpret=job.interpret,
+            sae_path=Path(job.sae_path) if job.sae_path else None,
+            evaluate=job.evaluate,
+        )
+
+        manifest_url = f"/outputs/showcase/{job.id}/manifest.json"
+        job.output_dir = outputs_dir
+        job.manifest_path = manifest_url
+        job.result_path = manifest_url
+        job.status = JobStatus.COMPLETED
+        job.progress = 1.0
+        job.logs.append(f"Showcase manifest: {manifest_url}")
+        broadcast({"type": "status", "status": "completed"})
+        broadcast({"type": "progress", "progress": 1.0})
+        broadcast({"type": "result", "url": manifest_url, "kind": "showcase"})
+        broadcast({"type": "log", "message": f"Showcase manifest: {manifest_url}"})
+    except Exception as e:  # pragma: no cover - error path mirrors single-job path
+        tb = traceback.format_exc()
+        logger.error(f"Showcase job failed: {e}")
+        job.status = JobStatus.FAILED
+        job.error = str(e)
+        job.logs.append(f"Error: {e}")
+        job.logs.append(f"Traceback:\n{tb}")
+        broadcast({"type": "status", "status": "failed"})
+        broadcast({"type": "error", "message": str(e)})
+        broadcast({"type": "log", "message": f"Error: {e}"})
 
 
 # Global instance

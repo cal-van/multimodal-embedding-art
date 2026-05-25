@@ -81,7 +81,8 @@ def test_create_job_with_encoder_name(client):
 
 
 def test_create_job_default_encoder(client):
-    """When encoder_name is omitted, the response reports 'imagebind'."""
+    """When encoder_name is omitted, the response reports the v3 canonical
+    encoder (``languagebind``)."""
     with patch.object(job_manager, "start_job") as mock_start:
         mock_start.return_value = None
         response = client.post(
@@ -91,7 +92,7 @@ def test_create_job_default_encoder(client):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["encoder_name"] == "imagebind"
+    assert data["encoder_name"] == "languagebind"
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +362,11 @@ def test_progress_callback_message_includes_components():
 
 
 def test_old_request_without_encoder_name_still_works(client):
-    """Requests that omit encoder_name/loss weights remain valid (backward compat)."""
+    """Requests that omit encoder_name/loss weights remain valid.
+
+    Default flips to ``languagebind`` post-v3 but the field stays
+    optional so the request body itself remains backward-compatible.
+    """
     with patch.object(job_manager, "start_job") as mock_start:
         mock_start.return_value = None
         response = client.post(
@@ -371,6 +376,90 @@ def test_old_request_without_encoder_name_still_works(client):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["encoder_name"] == "imagebind"
+    assert data["encoder_name"] == "languagebind"
     assert data["similarity_weight"] == pytest.approx(1.0)
     assert data["feature_matching_weight"] == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# 9. Showcase endpoint (v3)
+# ---------------------------------------------------------------------------
+
+
+class TestShowcaseEndpoint:
+    """POST /jobs/showcase mirrors the ``embed-art showcase`` CLI."""
+
+    def test_minimal_request_is_accepted(self, client):
+        with patch.object(job_manager, "start_job") as mock_start:
+            mock_start.return_value = None
+            response = client.post(
+                "/jobs/showcase",
+                json={"target_text": "thunder"},
+            )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["kind"] == "showcase"
+        assert data["encoder_name"] == "languagebind"
+        # Default modalities are all four, default tracks is honest only.
+        assert set(data["modalities"]) == {"image", "audio", "video", "text"}
+        assert data["tracks"] == ["honest"]
+
+    def test_dual_track_request_is_accepted(self, client):
+        with patch.object(job_manager, "start_job") as mock_start:
+            mock_start.return_value = None
+            response = client.post(
+                "/jobs/showcase",
+                json={
+                    "target_text": "ocean",
+                    "tracks": ["honest", "natural"],
+                    "modalities": ["image"],
+                    "image_backbone": "sd35",
+                    "autocast_dtype": "bf16",
+                    "steps": 50,
+                    "seed": 7,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["tracks"] == ["honest", "natural"]
+        assert data["modalities"] == ["image"]
+
+    def test_empty_target_text_rejected(self, client):
+        response = client.post(
+            "/jobs/showcase",
+            json={"target_text": "   "},
+        )
+        assert response.status_code == 400
+
+    def test_invalid_track_rejected_at_schema_level(self, client):
+        response = client.post(
+            "/jobs/showcase",
+            json={"target_text": "thunder", "tracks": ["bogus"]},
+        )
+        assert response.status_code == 422
+
+    def test_get_returns_manifest_url_when_complete(self, client):
+        """``GET /jobs/{id}`` reports manifest_url after the showcase runs."""
+        with patch.object(job_manager, "start_job") as mock_start:
+            mock_start.return_value = None
+            create_res = client.post(
+                "/jobs/showcase",
+                json={"target_text": "thunder"},
+            )
+        job_id = create_res.json()["id"]
+
+        # Mutate the in-memory job to simulate completion (so we don't
+        # have to actually run the showcase).
+        job = job_manager.get_job(job_id)
+        assert job is not None
+        job.manifest_path = f"/outputs/showcase/{job_id}/manifest.json"
+        job.result_path = job.manifest_path
+
+        get_res = client.get(f"/jobs/{job_id}")
+        assert get_res.status_code == 200
+        data = get_res.json()
+        assert data["manifest_url"] == job.manifest_path
+        assert data["result_url"] == job.manifest_path
+        assert data["kind"] == "showcase"
