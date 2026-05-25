@@ -11,7 +11,7 @@ Two public surfaces are provided:
   must satisfy.  Callers should type-hint against this, not against concrete
   classes.
 * ``OptimizationStrategy`` — the standard gradient-descent implementation.
-  It supports both ``LatentGenerator`` (optimize a latent tensor) and
+  It supports both ``Generator`` (optimize a latent tensor and decode) and
   ``DirectGenerator`` (optimize parameters directly held by the generator).
 
 Design reference: docs/superpowers/specs/2026-03-19-embedding-art-v2-design.md
