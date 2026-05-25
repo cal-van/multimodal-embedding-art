@@ -28,14 +28,29 @@ pip install -e ".[dev]"
 
 ### 2. Install LanguageBind (canonical encoder)
 
-LanguageBind is **not on PyPI** — it's distributed as a research codebase without `setup.py`. The simplest path is `PYTHONPATH`:
+LanguageBind is **not on PyPI** — it's distributed as a research codebase without `setup.py`. Two-step install:
+
+**2a. Clone the LanguageBind repo and add it to `PYTHONPATH`:**
 
 ```bash
 # From the parent directory of this repo:
 git clone https://github.com/PKU-YuanGroup/LanguageBind
 export PYTHONPATH="$PYTHONPATH:$(pwd)/LanguageBind"
-# Add the export to ~/.zshrc (macOS) or ~/.bashrc so it persists across shells.
+# Add that export to ~/.zshrc (macOS) or ~/.bashrc so it persists across shells.
 ```
+
+**2b. Install LanguageBind's transitive Python deps via this repo's extras group:**
+
+```bash
+# Linux / Windows
+pip install -e ".[languagebind]"
+
+# Apple Silicon (uses eva-decord instead of decord — upstream decord has no
+# prebuilt arm64 wheels and source builds frequently fail on M1/M2/M3).
+pip install -e ".[languagebind-macos]"
+```
+
+> **eva-decord on macOS arm64**: `eva-decord` is a community-maintained fork of the upstream DMLC `decord` video reader that ships prebuilt macOS arm64 wheels. Drop-in compatible (same `import decord` module name). LanguageBind requires the video reader for its video sub-encoder, but the upstream package has no arm64 wheel — so on Apple Silicon you either accept a long source build (which often fails on recent macOS SDKs) or use the fork. We default to the fork on Apple Silicon for this reason. If you'd rather build upstream `decord` from source, run `pip install -e ".[languagebind]"` on Apple Silicon too.
 
 ### 3. Run the canonical showcase
 

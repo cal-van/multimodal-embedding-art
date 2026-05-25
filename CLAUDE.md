@@ -17,11 +17,15 @@ The headline command is `embed-art showcase`. The legacy `embed-art optimize` co
 pip install -e ".[dev]"
 
 # LanguageBind is the canonical multimodal encoder (v3 aggressive-rewrite).
-# Distributed as a research codebase without setup.py — clone and add to path.
+# Distributed as a research codebase without setup.py. Two-step install:
+#   (a) Clone and add to PYTHONPATH:
 git clone https://github.com/PKU-YuanGroup/LanguageBind ../LanguageBind
-# Then either:
-#   (a) add ../LanguageBind to PYTHONPATH, or
-#   (b) create a minimal setup.py inside ../LanguageBind and run pip install -e .
+export PYTHONPATH="$PYTHONPATH:$(pwd)/../LanguageBind"
+#   (b) Install LanguageBind's transitive Python deps via this repo's extras:
+pip install -e ".[languagebind]"        # Linux / Windows
+pip install -e ".[languagebind-macos]"  # Apple Silicon (uses eva-decord
+                                        #   because upstream decord has no
+                                        #   prebuilt arm64 wheels).
 
 # ImageBind is the v1/v2 encoder, deprecated in v3 but kept for back-compat
 git clone https://github.com/facebookresearch/ImageBind

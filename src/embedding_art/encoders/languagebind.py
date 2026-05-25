@@ -218,16 +218,24 @@ class LanguageBindEncoder:
             raise ModelLoadError(
                 "languagebind",
                 ImportError(
+                    f"LanguageBind import failed ({e}).\n"
+                    "\n"
                     "LanguageBind is not installed. It's NOT on PyPI \u2014 distributed as a\n"
-                    "research codebase without setup.py. From the parent directory of\n"
-                    "this repo, the simplest path is:\n"
+                    "research codebase without setup.py. Two-step install:\n"
                     "\n"
-                    "  git clone https://github.com/PKU-YuanGroup/LanguageBind\n"
-                    '  export PYTHONPATH="$PYTHONPATH:$(pwd)/LanguageBind"\n'
+                    "  1. Clone and add to PYTHONPATH (from this repo's parent dir):\n"
+                    "       git clone https://github.com/PKU-YuanGroup/LanguageBind\n"
+                    '       export PYTHONPATH="$PYTHONPATH:$(pwd)/LanguageBind"\n'
+                    "     Add that export to ~/.zshrc (macOS) or ~/.bashrc so it\n"
+                    "     persists across shells.\n"
                     "\n"
-                    "Add that export to ~/.zshrc (macOS) or ~/.bashrc so it persists.\n"
-                    "Alternatively, write a minimal setup.py inside the clone and run\n"
-                    "`pip install -e .` against it. See README.md / CLAUDE.md."
+                    "  2. Install its transitive Python deps via this repo's extras:\n"
+                    '       pip install -e ".[languagebind]"        # Linux / Windows\n'
+                    '       pip install -e ".[languagebind-macos]"  # Apple Silicon\n'
+                    "     (macOS arm64 uses eva-decord because upstream decord has\n"
+                    "     no prebuilt arm64 wheels.)\n"
+                    "\n"
+                    "See README.md / CLAUDE.md for the full guide."
                 ),
             ) from e
 

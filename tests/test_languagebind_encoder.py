@@ -134,7 +134,12 @@ class TestLanguageBindEncoderMissingPackage:
 
     def test_load_modality_raises_model_load_error_without_package(self) -> None:
         """If ``languagebind`` is not importable, loading any modality must
-        raise ``ModelLoadError`` with installation guidance."""
+        raise ``ModelLoadError`` with installation guidance \u2014 specifically,
+        pointing at PYTHONPATH for the clone step and at the
+        ``[languagebind]`` / ``[languagebind-macos]`` extras for the pip
+        deps step. Future humans should not have to rediscover the
+        ``peft``/``decord``/``ftfy``/``iopath``/``webdataset`` chain by
+        hand."""
         with patch.dict("sys.modules", {"languagebind": None}):
             encoder = LanguageBindEncoder.__new__(LanguageBindEncoder)
             encoder._device = torch.device("cpu")
@@ -143,7 +148,12 @@ class TestLanguageBindEncoderMissingPackage:
             encoder._tokenizer = None
             with pytest.raises(ModelLoadError) as exc_info:
                 encoder._load_modality("image")
-            assert "LanguageBind is not installed" in str(exc_info.value.original_error)
+            msg = str(exc_info.value.original_error)
+            assert "LanguageBind is not installed" in msg
+            assert "PYTHONPATH" in msg
+            assert '".[languagebind]"' in msg
+            assert '".[languagebind-macos]"' in msg
+            assert "eva-decord" in msg
 
     def test_load_modality_raises_on_unknown_modality(self) -> None:
         encoder = LanguageBindEncoder.__new__(LanguageBindEncoder)
