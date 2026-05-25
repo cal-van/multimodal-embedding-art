@@ -12,6 +12,7 @@ import yaml
 from embedding_art.cli.commands.anchor_compare import anchor_compare
 from embedding_art.cli.commands.batch import batch
 from embedding_art.cli.commands.compare import compare as compare_cmd
+from embedding_art.cli.commands.compile_probes import bench_probes, compile_probes
 from embedding_art.cli.commands.decompose import decompose
 from embedding_art.cli.commands.embed import compare, embed
 from embedding_art.cli.commands.grid import grid
@@ -80,6 +81,8 @@ cli.add_command(anchor_compare)
 cli.add_command(profile)
 cli.add_command(text_anchor_sweep)
 cli.add_command(train_probes)
+cli.add_command(compile_probes)
+cli.add_command(bench_probes)
 
 
 if __name__ == "__main__":
