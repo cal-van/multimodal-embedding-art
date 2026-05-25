@@ -84,6 +84,10 @@ class SD35DiffusionAdapter:
     dtype: torch.dtype = torch.float32
     loader: Callable[[str, torch.device, torch.dtype], Any] = field(default=_default_loader)
     _pipeline: Any = field(default=None, init=False, repr=False)
+    # Populated by :func:`build_vsd_phi_adapter` when LoRA is injected.
+    # The base adapter leaves this as an empty list. The phi adapter
+    # uses it to enumerate trainable LoRA parameters.
+    _lora_modules: list = field(default_factory=list, init=False, repr=False)
 
     # ------------------------------------------------------------------
     # Lazy load
@@ -170,7 +174,22 @@ class SD35DiffusionAdapter:
         # diffusers contract is *integer* timesteps scaled to 1000; we
         # follow that.
         t_scaled = t * 1000.0
-        with torch.no_grad():
+
+        # If this adapter has no LoRA modules of its own and the shared
+        # transformer has LoRAs from a sibling phi adapter, disable
+        # them for the duration of this forward so the base score
+        # function sees the clean pretrained model. The phi adapter's
+        # own score_fn leaves LoRAs enabled.
+        from embedding_art.diffusion_priors.lora import LoRALinear, lora_disabled
+
+        has_own_lora = bool(self._lora_modules)
+        transformer_has_lora = any(isinstance(m, LoRALinear) for m in transformer.modules())
+        wrap_disabled = transformer_has_lora and not has_own_lora
+
+        # VSD's student loss needs gradients through the φ-adapter's
+        # LoRA params. The base adapter still benefits from
+        # ``torch.no_grad`` because nothing under it is trainable.
+        if has_own_lora:
             v_pred = transformer(
                 hidden_states=x_t,
                 timestep=t_scaled,
@@ -178,10 +197,41 @@ class SD35DiffusionAdapter:
                 pooled_projections=pooled,
                 return_dict=False,
             )[0]
+        else:
+            with torch.no_grad():
+                if wrap_disabled:
+                    with lora_disabled(transformer):
+                        v_pred = transformer(
+                            hidden_states=x_t,
+                            timestep=t_scaled,
+                            encoder_hidden_states=prompt_embeds,
+                            pooled_projections=pooled,
+                            return_dict=False,
+                        )[0]
+                else:
+                    v_pred = transformer(
+                        hidden_states=x_t,
+                        timestep=t_scaled,
+                        encoder_hidden_states=prompt_embeds,
+                        pooled_projections=pooled,
+                        return_dict=False,
+                    )[0]
 
         # Broadcast (1 - t) over spatial dims.
         coeff = (1.0 - t).view(-1, *([1] * (x_t.dim() - 1)))
         return x_t + coeff * v_pred
+
+    def lora_parameters(self) -> list[torch.nn.Parameter]:
+        """Return trainable LoRA parameters on this adapter.
+
+        Empty list when no LoRA modules are injected (base adapter).
+        :class:`VSDLoss` uses this to assemble the φ-model optimiser.
+        """
+        params: list[torch.nn.Parameter] = []
+        for m in self._lora_modules:
+            params.append(m.lora_A)
+            params.append(m.lora_B)
+        return params
 
     # ------------------------------------------------------------------
     # Helpers
@@ -220,28 +270,64 @@ class SD35DiffusionAdapter:
         return conditioning, None
 
 
-def build_vsd_phi_adapter(base: SD35DiffusionAdapter) -> SD35DiffusionAdapter:
-    """Return a LoRA-augmented adapter sharing weights with ``base``.
+def build_vsd_phi_adapter(
+    base: SD35DiffusionAdapter,
+    *,
+    rank: int = 4,
+    alpha: float = 4.0,
+) -> SD35DiffusionAdapter:
+    """Return a LoRA-augmented adapter that shares the pipeline with ``base``.
 
-    The intended use: ``base`` is the frozen prior; the returned adapter
-    is the *trainable φ model* that VSD updates. In the current
-    skeleton implementation the LoRA injection is a TODO — the adapter
-    is structurally identical, so VSD can still be exercised against
-    a clean SD3.5 model. Wiring the real LoRA layers is the next
-    follow-up; see comments inline.
+    The intended use:
+
+    * ``base`` is the frozen prior. Its ``score_fn`` runs with
+      LoRA disabled, producing the clean diffusion noise prediction.
+    * The returned adapter is the trainable φ model used by
+      :class:`VSDLoss`. Its ``score_fn`` runs with LoRA enabled, so the
+      gradient flows into the LoRA-A / LoRA-B parameters (the only
+      trainable weights in the system).
+
+    Both adapters share the same underlying SD3.5 transformer
+    submodules (no weight duplication). The mechanism that lets two
+    adapters route through the same transformer with different LoRA
+    states is a context manager (:class:`lora_disabled`) that the
+    base adapter's ``score_fn`` wraps its transformer call in.
+
+    Args:
+        base: The frozen-prior adapter. Must be loaded before the phi
+            adapter is built (the call here triggers a load if
+            necessary so the LoRA modules can be sized correctly).
+        rank: LoRA rank. Default 4 — minimal but gradient-friendly.
+        alpha: LoRA scaling factor; standard convention sets it equal
+            to ``rank``.
+
+    Returns:
+        A :class:`SD35DiffusionAdapter` whose transformer has LoRA
+        adapters injected over every attention projection. The
+        ``lora_parameters()`` method on the returned adapter yields
+        the optimisable parameters for the VSD student loss.
     """
-    # TODO: insert LoRA adapters into base.pipeline.transformer.
-    # The intended shape is:
-    #   1. Deep-copy or share weights with base.
-    #   2. Inject diffusers.LoraConfig over the transformer's
-    #      Q/K/V/Out projections at a small rank (e.g. r=4).
-    #   3. Mark only the LoRA parameters as trainable.
-    # For now we return a clean copy of base; VSDLoss will still run,
-    # but the variational refinement is the identity until LoRA is
-    # plumbed in.
-    return SD35DiffusionAdapter(
+    from embedding_art.diffusion_priors.lora import inject_lora_into_transformer
+
+    pipeline = base._ensure_loaded()
+    transformer = base._get_transformer(pipeline)
+    injected = inject_lora_into_transformer(transformer, rank=rank, alpha=alpha)
+    if not injected:
+        logger.warning(
+            "build_vsd_phi_adapter: no attention projections matched. "
+            "The φ adapter behaves identically to base — VSD will be "
+            "a no-op refinement."
+        )
+    logger.info("build_vsd_phi_adapter: injected %d LoRA wrappers", len(injected))
+
+    phi = SD35DiffusionAdapter(
         model_id=base.model_id,
         device=base.device,
         dtype=base.dtype,
         loader=base.loader,
     )
+    # Share the same loaded pipeline. The injection above already
+    # modified the shared transformer in-place.
+    phi._pipeline = pipeline
+    phi._lora_modules = injected
+    return phi

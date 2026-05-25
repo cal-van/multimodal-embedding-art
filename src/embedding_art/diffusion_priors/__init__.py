@@ -31,6 +31,13 @@ from embedding_art.diffusion_priors.dual_track import (
     dual_track_loss,
     make_dual_track_tracks,
 )
+from embedding_art.diffusion_priors.lora import (
+    LoRALinear,
+    inject_lora_into_transformer,
+    lora_disabled,
+    lora_parameters,
+    set_lora_enabled,
+)
 from embedding_art.diffusion_priors.sd35_adapter import (
     SD35DiffusionAdapter,
     build_vsd_phi_adapter,
@@ -40,10 +47,15 @@ from embedding_art.diffusion_priors.vsd import VSDLoss
 
 __all__ = [
     "DualTrackConfig",
+    "LoRALinear",
     "SD35DiffusionAdapter",
     "SDSLoss",
     "VSDLoss",
     "build_vsd_phi_adapter",
     "dual_track_loss",
+    "inject_lora_into_transformer",
+    "lora_disabled",
+    "lora_parameters",
     "make_dual_track_tracks",
+    "set_lora_enabled",
 ]
