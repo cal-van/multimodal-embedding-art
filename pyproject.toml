@@ -43,6 +43,30 @@ dev = [
     "jupyter>=1.0.0",
     "matplotlib>=3.8.0",
 ]
+# LanguageBind itself is NOT on PyPI (research codebase, no setup.py). You
+# still need to clone it and put it on PYTHONPATH (see README.md). But these
+# are LanguageBind's transitive Python dependencies that ARE on PyPI and
+# weren't being pinned anywhere — fresh installs would discover them one at
+# a time via opaque ImportError chains. Install with:
+#   pip install -e ".[languagebind]"        # Linux / Windows
+#   pip install -e ".[languagebind-macos]"  # Apple Silicon (uses eva-decord
+#                                           #   instead of decord, since
+#                                           #   upstream decord has no
+#                                           #   prebuilt arm64 wheels)
+languagebind = [
+    "peft>=0.7.0",
+    "decord>=0.6.0",
+    "ftfy>=6.1.0",
+    "iopath>=0.1.10",
+    "webdataset>=0.2.0",
+]
+languagebind-macos = [
+    "peft>=0.7.0",
+    "eva-decord>=0.6.1",
+    "ftfy>=6.1.0",
+    "iopath>=0.1.10",
+    "webdataset>=0.2.0",
+]
 
 [project.scripts]
 embed-art = "embedding_art.cli.main:cli"
