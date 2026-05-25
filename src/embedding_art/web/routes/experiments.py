@@ -19,6 +19,7 @@ enough to return inline.
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -228,7 +229,7 @@ async def anchor_compare_multimodal(
     four.
     """
     from embedding_art.encoders.defaults import create_default_registry
-    from embedding_art.experiments import run_anchor_comparison
+    from embedding_art.experiments import EncoderActivationCache, run_anchor_comparison
 
     refs_present = sum(x is not None for x in (text and text.strip() or None, image, audio, video))
     if refs_present == 0:
@@ -249,6 +250,14 @@ async def anchor_compare_multimodal(
     audio_path = await _spool_upload(audio, suffix=".wav")
     video_path = await _spool_upload(video, suffix=".mp4")
 
+    # Activation cache lives under the process working dir; identical
+    # uploads (e.g. the user re-running the same comparison) avoid the
+    # repeat encoder forward.
+    cache = EncoderActivationCache(
+        Path(os.getcwd()) / "outputs" / "anchor_compare_cache",
+        encoder_id=encoder,
+    )
+
     try:
         result = run_anchor_comparison(
             concept_label=concept_label,
@@ -259,6 +268,7 @@ async def anchor_compare_multimodal(
             audio_path=audio_path,
             video_path=video_path,
             top_k_text=top_k_text,
+            cache=cache,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"anchor-compare-multimodal failed: {e}") from e

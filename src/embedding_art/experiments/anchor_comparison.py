@@ -33,6 +33,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F  # noqa: N812
 
+from embedding_art.experiments.activation_cache import EncoderActivationCache
 from embedding_art.interpretation.text_anchor import text_anchor_readout
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ def run_anchor_comparison(
     sae: Any = None,
     top_k_text: int = 20,
     top_k_features: int = 32,
+    cache: EncoderActivationCache | None = None,
 ) -> AnchorComparison:
     """Encode the concept through each available modality and compare.
 
@@ -102,6 +104,9 @@ def run_anchor_comparison(
         top_k_text: Top-K text-anchor words to record per modality.
         top_k_features: Number of SAE features to retain per
             modality for the overlap computation.
+        cache: Optional content-addressed cache. When supplied, encoder
+            forwards are short-circuited for inputs whose bytes have
+            been seen before under the same ``encoder_id``.
 
     Returns:
         Populated :class:`AnchorComparison`.
@@ -128,7 +133,14 @@ def run_anchor_comparison(
             continue
 
         try:
-            encoded = getattr(encoder, encode_method_name)(ref)
+            if cache is not None:
+                encoded = cache.get_or_compute(
+                    modality,
+                    ref,
+                    lambda: getattr(encoder, encode_method_name)(ref),
+                )
+            else:
+                encoded = getattr(encoder, encode_method_name)(ref)
             if not isinstance(encoded, torch.Tensor):
                 raise TypeError(f"encode_{modality} returned {type(encoded)}")
 

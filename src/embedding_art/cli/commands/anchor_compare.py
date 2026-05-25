@@ -97,6 +97,17 @@ logger = logging.getLogger(__name__)
     show_default=True,
     help="Top-K SAE features per modality for the overlap computation.",
 )
+@click.option(
+    "--cache-dir",
+    "cache_dir",
+    type=click.Path(file_okay=False, dir_okay=True),
+    default=None,
+    help=(
+        "Optional directory for the content-addressed encoder activation "
+        "cache. When supplied, repeated anchor-compare runs on the same "
+        "reference files skip the encoder forward."
+    ),
+)
 @click.pass_context
 def anchor_compare(
     ctx: click.Context,
@@ -111,6 +122,7 @@ def anchor_compare(
     sae_path: str | None,
     top_k_text: int,
     top_k_features: int,
+    cache_dir: str | None,
 ) -> None:
     """Compare a single concept encoded through multiple modality references."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
@@ -128,6 +140,7 @@ def anchor_compare(
             sae_path=Path(sae_path) if sae_path else None,
             top_k_text=top_k_text,
             top_k_features=top_k_features,
+            cache_dir=Path(cache_dir) if cache_dir else None,
         )
     except Exception as e:
         handle_exception(e, debug_mode)
@@ -147,11 +160,12 @@ def _anchor_compare_impl(
     sae_path: Path | None,
     top_k_text: int,
     top_k_features: int,
+    cache_dir: Path | None = None,
 ) -> None:
     """Orchestrate the anchor-comparison experiment and write the result."""
     from embedding_art.cli.commands.showcase import _load_sae
     from embedding_art.encoders.defaults import create_default_registry
-    from embedding_art.experiments import run_anchor_comparison
+    from embedding_art.experiments import EncoderActivationCache, run_anchor_comparison
 
     if all(ref is None for ref in (text, image_path, audio_path, video_path)):
         raise click.UsageError(
@@ -166,6 +180,14 @@ def _anchor_compare_impl(
 
     sae = _load_sae(sae_path) if sae_path else None
 
+    cache = (
+        EncoderActivationCache(cache_dir, encoder_id=encoder_name)
+        if cache_dir is not None
+        else None
+    )
+    if cache is not None:
+        console.print(f"[bold]Using activation cache at {cache_dir}[/bold]")
+
     console.print(f"[bold]Comparing concept '{concept_label}' across supplied modalities...[/bold]")
 
     result = run_anchor_comparison(
@@ -179,7 +201,10 @@ def _anchor_compare_impl(
         sae=sae,
         top_k_text=top_k_text,
         top_k_features=top_k_features,
+        cache=cache,
     )
+    if cache is not None:
+        console.print(f"[dim]Cache: {cache.hits} hits / {cache.misses} misses[/dim]")
 
     output_path = output_dir / "anchor_comparison.json"
     output_path.write_text(json.dumps(result.to_dict(), indent=2))

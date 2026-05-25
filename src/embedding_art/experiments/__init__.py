@@ -19,9 +19,14 @@ Outputs include:
   qualitatively how the same concept reads differently from each side).
 """
 
+from embedding_art.experiments.activation_cache import EncoderActivationCache
 from embedding_art.experiments.anchor_comparison import (
     AnchorComparison,
     run_anchor_comparison,
 )
 
-__all__ = ["AnchorComparison", "run_anchor_comparison"]
+__all__ = [
+    "AnchorComparison",
+    "EncoderActivationCache",
+    "run_anchor_comparison",
+]
