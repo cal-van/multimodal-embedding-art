@@ -180,3 +180,132 @@ class TestSaeAutoLabelCli:
 
         assert result.exit_code == 0, result.output
         assert "Falling back to cosine" in result.output
+
+
+def _write_corpus(path: Path, sources: list[str], embed_dim: int = 8) -> Path:
+    """Write a synthetic 'sae collect' corpus with both embeddings + sources."""
+    import torch
+
+    torch.manual_seed(0)
+    embeddings = torch.randn(len(sources), embed_dim)
+    embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
+    torch.save({"embeddings": embeddings, "sources": sources}, path)
+    return path
+
+
+class TestActivatingExamplesLabeller:
+    def test_prompts_with_top_k_source_names(self, tmp_path: Path) -> None:
+        from embedding_art.sae.labelling import ActivatingExamplesLabeller
+
+        sae_dir = _write_sae_checkpoint(tmp_path / "sae", n_features=2, embed_dim=8)
+        corpus = _write_corpus(
+            tmp_path / "corpus.pt",
+            [f"img_{i:03d}.png" for i in range(12)],
+            embed_dim=8,
+        )
+
+        captured_prompts: list[str] = []
+
+        def fake_llm(prompt: str) -> str:
+            captured_prompts.append(prompt)
+            return "thunder"
+
+        labeller = ActivatingExamplesLabeller(
+            corpus_path=corpus,
+            llm_callable=fake_llm,
+            top_k_examples=4,
+        )
+        labels = labeller.label_all(sae_path=sae_dir, encoder=_FakeEncoder())
+
+        assert labels == ["thunder", "thunder"]
+        assert len(captured_prompts) == 2
+        # Every prompt should embed exactly 4 source filenames.
+        for prompt in captured_prompts:
+            assert "activates" in prompt
+            source_mentions = sum(1 for i in range(12) if f"img_{i:03d}.png" in prompt)
+            assert source_mentions == 4
+
+    def test_falls_back_when_corpus_lacks_sources(self, tmp_path: Path) -> None:
+        """Backwards-compat: a corpus saved by an older sae collect (no
+        'sources' key) should not break; we degrade to cosine labels."""
+        import torch
+
+        from embedding_art.sae.labelling import ActivatingExamplesLabeller
+
+        sae_dir = _write_sae_checkpoint(tmp_path / "sae", n_features=2, embed_dim=8)
+        # Legacy corpus: embeddings only, no sources.
+        corpus_path = tmp_path / "legacy_corpus.pt"
+        torch.save({"embeddings": torch.randn(8, 8)}, corpus_path)
+
+        llm = MagicMock(return_value="should-not-be-called")
+        labeller = ActivatingExamplesLabeller(
+            corpus_path=corpus_path,
+            llm_callable=llm,
+            top_k_examples=4,
+        )
+        labels = labeller.label_all(sae_path=sae_dir, encoder=_FakeEncoder())
+
+        assert len(labels) == 2
+        for label in labels:
+            assert isinstance(label, str) and label
+        # We did NOT call the LLM — fell back to cosine.
+        llm.assert_not_called()
+
+    def test_falls_back_per_feature_on_llm_failure(self, tmp_path: Path) -> None:
+        from embedding_art.sae.labelling import ActivatingExamplesLabeller
+
+        sae_dir = _write_sae_checkpoint(tmp_path / "sae", n_features=3, embed_dim=8)
+        corpus = _write_corpus(
+            tmp_path / "corpus.pt", [f"x_{i}.wav" for i in range(8)], embed_dim=8
+        )
+
+        call_count = {"n": 0}
+
+        def flaky(prompt: str) -> str:
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise RuntimeError("rate limited")
+            return f"vlm_{call_count['n']}"
+
+        labels = ActivatingExamplesLabeller(
+            corpus_path=corpus,
+            llm_callable=flaky,
+            top_k_examples=3,
+        ).label_all(sae_path=sae_dir, encoder=_FakeEncoder())
+        assert len(labels) == 3
+        assert labels[0] == "vlm_1"
+        assert labels[2] == "vlm_3"
+        assert labels[1] and labels[1] != "vlm_2"  # cosine fallback
+
+
+class TestSaeCollectStoresSources:
+    """Regression: ``collect_embeddings`` must store source paths so the
+    activating-examples labeller works downstream."""
+
+    def test_collect_embeddings_writes_sources(self, tmp_path: Path) -> None:
+        import torch
+        from PIL import Image
+
+        from embedding_art.sae.training import collect_embeddings
+
+        # Two trivial images.
+        for i in range(2):
+            img = Image.new("RGB", (32, 32), color=(i * 80, 0, 0))
+            img.save(tmp_path / f"img_{i}.png")
+
+        class _StubEncoder:
+            embedding_dim = 8
+
+            def encode_image(self, path):  # noqa: ANN001
+                return torch.randn(1, 8)
+
+        out = tmp_path / "corpus.pt"
+        collect_embeddings(
+            encoder=_StubEncoder(),
+            dataset_path=tmp_path,
+            output_path=out,
+        )
+        data = torch.load(out, weights_only=True)
+        assert "sources" in data
+        assert len(data["sources"]) == 2
+        assert all(s.endswith(".png") for s in data["sources"])

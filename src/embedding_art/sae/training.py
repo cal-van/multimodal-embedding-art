@@ -166,10 +166,17 @@ def _encode_paths_to_pt(
 ) -> Path | None:
     """Encode each item via ``encode_fn`` and save the resulting tensor.
 
+    Saves a dict with ``"embeddings"`` and ``"sources"`` keys. Sources
+    are stringified inputs (paths or texts), aligned 1:1 with rows of
+    ``embeddings``. This enables the activating-examples VLM labelling
+    path downstream (see ``ActivatingExamplesLabeller``). Items whose
+    encoding failed are skipped from both lists.
+
     Returns ``None`` if every encode call failed and there was nothing
     to save.
     """
     all_embeddings: list[torch.Tensor] = []
+    kept_sources: list[str] = []
     for i, item in enumerate(paths):
         try:
             emb = encode_fn(item)
@@ -177,6 +184,7 @@ def _encode_paths_to_pt(
             logger.warning("%s encoding failed for %s — skipping.", modality, item, exc_info=True)
             continue
         all_embeddings.append(emb.detach().cpu().float())
+        kept_sources.append(str(item))
         if (i + 1) % 32 == 0:
             logger.info("  %s: %d / %d done", modality, i + 1, len(paths))
 
@@ -187,7 +195,7 @@ def _encode_paths_to_pt(
     embeddings = torch.cat(all_embeddings, dim=0)
     embeddings = F.normalize(embeddings, dim=-1)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"embeddings": embeddings}, output_path)
+    torch.save({"embeddings": embeddings, "sources": kept_sources}, output_path)
     logger.info("Saved %d %s embeddings to %s", embeddings.shape[0], modality, output_path)
     return output_path.resolve()
 
@@ -252,6 +260,7 @@ def collect_embeddings(
     logger.info("Encoding %d images from %s …", len(image_paths), dataset_path)
 
     all_embeddings: list[torch.Tensor] = []
+    kept_sources: list[str] = []
 
     for i, img_path in enumerate(image_paths):
         try:
@@ -261,6 +270,7 @@ def collect_embeddings(
             continue
 
         all_embeddings.append(emb.detach().cpu().float())
+        kept_sources.append(str(img_path))
 
         if (i + 1) % batch_size == 0:
             logger.info("  … %d / %d done", i + 1, len(image_paths))
@@ -272,7 +282,7 @@ def collect_embeddings(
     embeddings = F.normalize(embeddings, dim=-1)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"embeddings": embeddings}, output_path)
+    torch.save({"embeddings": embeddings, "sources": kept_sources}, output_path)
 
     logger.info("Saved %d embeddings to %s", embeddings.shape[0], output_path)
     return output_path.resolve()

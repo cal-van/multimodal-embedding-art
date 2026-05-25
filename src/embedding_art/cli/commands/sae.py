@@ -624,6 +624,26 @@ def label(ctx: click.Context, model_path, encoder):
         "on any failure."
     ),
 )
+@click.option(
+    "--corpus",
+    "corpus_path",
+    type=click.Path(exists=True),
+    default=None,
+    help=(
+        "Optional path to a corpus .pt file (produced by 'sae collect') with "
+        "both 'embeddings' and 'sources' keys. When provided alongside "
+        "--use-vlm, switches to the activating-examples labeller — the LLM "
+        "is prompted with the top-K corpus entries that activate each "
+        "feature, rather than the top-K nearest vocabulary words."
+    ),
+)
+@click.option(
+    "--top-k-examples",
+    type=int,
+    default=8,
+    show_default=True,
+    help="How many activating examples per feature to include in the LLM prompt.",
+)
 @click.pass_context
 def auto_label(
     ctx: click.Context,
@@ -632,6 +652,8 @@ def auto_label(
     device: str,
     output_path: str | None,
     use_vlm: bool,
+    corpus_path: str | None,
+    top_k_examples: int,
 ) -> None:
     """Generate feature_labels.json non-interactively.
 
@@ -644,7 +666,11 @@ def auto_label(
         import json
 
         from embedding_art.encoders.defaults import create_default_registry
-        from embedding_art.sae.labelling import CosineLabeller, VLMLabeller
+        from embedding_art.sae.labelling import (
+            ActivatingExamplesLabeller,
+            CosineLabeller,
+            VLMLabeller,
+        )
 
         sae_path = Path(model_path)
         registry = create_default_registry()
@@ -659,6 +685,16 @@ def auto_label(
                     "Falling back to cosine labeller.[/yellow]"
                 )
                 labeller = CosineLabeller()
+            elif corpus_path is not None:
+                console.print(
+                    f"[cyan]Using activating-examples labeller with corpus "
+                    f"{corpus_path} (top-{top_k_examples} examples per feature).[/cyan]"
+                )
+                labeller = ActivatingExamplesLabeller(
+                    corpus_path=Path(corpus_path),
+                    llm_callable=llm_callable,
+                    top_k_examples=top_k_examples,
+                )
             else:
                 labeller = VLMLabeller(llm_callable=llm_callable)
         else:
