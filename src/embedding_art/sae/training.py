@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
@@ -45,6 +45,151 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
+
+
+_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
+
+
+def collect_multimodal_embeddings(
+    encoder: Encoder,
+    dataset_path: Path | str,
+    output_dir: Path | str,
+    modalities: list[str] | None = None,
+    max_samples_per_modality: int | None = None,
+) -> dict[str, Path]:
+    """Collect per-modality embedding files from a mixed-content directory.
+
+    Scans ``dataset_path`` recursively. Files are grouped by extension:
+
+    * Image extensions → ``image_embeddings.pt``
+    * Audio extensions → ``audio_embeddings.pt``
+    * Video extensions → ``video_embeddings.pt``
+    * A file named ``texts.txt`` (one prompt per line) → ``text_embeddings.pt``
+
+    Each output file matches the shape produced by :func:`collect_embeddings`
+    (``{"embeddings": float32 [N, D]}``) so it can be fed directly into
+    ``embed-art sae train-stack``.
+
+    Args:
+        encoder: The canonical multimodal encoder (must expose the
+            relevant ``encode_<modality>`` method for every modality
+            requested).
+        dataset_path: Root directory to scan.
+        output_dir: Directory in which to write the per-modality
+            ``*_embeddings.pt`` files. Created if missing.
+        modalities: Optional list to restrict the scan. Defaults to
+            ``["image", "audio", "video", "text"]``.
+        max_samples_per_modality: Optional cap; applied independently
+            to each modality after sorting.
+
+    Returns:
+        Dict mapping modality name → the saved ``.pt`` path. Modalities
+        that found no files (or whose encoder method raised on every
+        file) are absent.
+    """
+    dataset_path = Path(dataset_path)
+    output_dir = Path(output_dir)
+
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
+
+    requested = set(modalities or ["image", "audio", "video", "text"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ext_to_modality = {ext: "image" for ext in _IMAGE_EXTENSIONS}
+    ext_to_modality.update({ext: "audio" for ext in _AUDIO_EXTENSIONS})
+    ext_to_modality.update({ext: "video" for ext in _VIDEO_EXTENSIONS})
+
+    grouped: dict[str, list[Path]] = {"image": [], "audio": [], "video": []}
+    for path in sorted(dataset_path.rglob("*")):
+        if not path.is_file():
+            continue
+        modality = ext_to_modality.get(path.suffix.lower())
+        if modality is None:
+            continue
+        if modality in requested:
+            grouped[modality].append(path)
+
+    if max_samples_per_modality is not None:
+        for k in grouped:
+            grouped[k] = grouped[k][:max_samples_per_modality]
+
+    encode_methods = {
+        "image": "encode_image",
+        "audio": "encode_audio",
+        "video": "encode_video",
+    }
+    saved: dict[str, Path] = {}
+    for modality, paths in grouped.items():
+        if not paths:
+            continue
+        method_name = encode_methods[modality]
+        if not hasattr(encoder, method_name):
+            logger.warning("Encoder has no %s — skipping %s modality.", method_name, modality)
+            continue
+        encode_fn = getattr(encoder, method_name)
+        path = _encode_paths_to_pt(
+            paths=paths,
+            encode_fn=encode_fn,
+            output_path=output_dir / f"{modality}_embeddings.pt",
+            modality=modality,
+        )
+        if path is not None:
+            saved[modality] = path
+
+    if "text" in requested:
+        texts_file = dataset_path / "texts.txt"
+        if texts_file.exists() and hasattr(encoder, "encode_text"):
+            texts = [line.strip() for line in texts_file.read_text().splitlines() if line.strip()]
+            if max_samples_per_modality is not None:
+                texts = texts[:max_samples_per_modality]
+            if texts:
+                path = _encode_paths_to_pt(
+                    paths=texts,
+                    encode_fn=encoder.encode_text,
+                    output_path=output_dir / "text_embeddings.pt",
+                    modality="text",
+                )
+                if path is not None:
+                    saved["text"] = path
+
+    return saved
+
+
+def _encode_paths_to_pt(
+    *,
+    paths: list[Any],
+    encode_fn: Any,
+    output_path: Path,
+    modality: str,
+) -> Path | None:
+    """Encode each item via ``encode_fn`` and save the resulting tensor.
+
+    Returns ``None`` if every encode call failed and there was nothing
+    to save.
+    """
+    all_embeddings: list[torch.Tensor] = []
+    for i, item in enumerate(paths):
+        try:
+            emb = encode_fn(item)
+        except Exception:
+            logger.warning("%s encoding failed for %s — skipping.", modality, item, exc_info=True)
+            continue
+        all_embeddings.append(emb.detach().cpu().float())
+        if (i + 1) % 32 == 0:
+            logger.info("  %s: %d / %d done", modality, i + 1, len(paths))
+
+    if not all_embeddings:
+        logger.warning("No %s embeddings collected; nothing to save.", modality)
+        return None
+
+    embeddings = torch.cat(all_embeddings, dim=0)
+    embeddings = F.normalize(embeddings, dim=-1)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"embeddings": embeddings}, output_path)
+    logger.info("Saved %d %s embeddings to %s", embeddings.shape[0], modality, output_path)
+    return output_path.resolve()
 
 
 def collect_embeddings(
@@ -575,39 +720,181 @@ def label_features(
 # of vocabulary used in CLIP/DINO probing studies.
 _VOCAB_BASE: list[str] = [
     # colours
-    "red", "orange", "yellow", "green", "blue", "purple", "pink", "brown",
-    "black", "white", "grey", "cyan", "magenta", "crimson", "turquoise",
+    "red",
+    "orange",
+    "yellow",
+    "green",
+    "blue",
+    "purple",
+    "pink",
+    "brown",
+    "black",
+    "white",
+    "grey",
+    "cyan",
+    "magenta",
+    "crimson",
+    "turquoise",
     # animals
-    "dog", "cat", "bird", "fish", "horse", "lion", "tiger", "elephant",
-    "bear", "wolf", "fox", "rabbit", "deer", "eagle", "owl", "shark",
-    "whale", "dolphin", "monkey", "gorilla", "zebra", "giraffe", "penguin",
-    "frog", "snake", "turtle", "bee", "butterfly", "spider", "ant",
+    "dog",
+    "cat",
+    "bird",
+    "fish",
+    "horse",
+    "lion",
+    "tiger",
+    "elephant",
+    "bear",
+    "wolf",
+    "fox",
+    "rabbit",
+    "deer",
+    "eagle",
+    "owl",
+    "shark",
+    "whale",
+    "dolphin",
+    "monkey",
+    "gorilla",
+    "zebra",
+    "giraffe",
+    "penguin",
+    "frog",
+    "snake",
+    "turtle",
+    "bee",
+    "butterfly",
+    "spider",
+    "ant",
     # nature / landscape
-    "ocean", "river", "lake", "mountain", "forest", "desert", "valley",
-    "beach", "sunset", "sunrise", "storm", "snow", "rain", "fog", "fire",
-    "cloud", "sky", "tree", "flower", "grass", "rock", "sand", "leaf",
-    "wave", "waterfall", "cave", "island", "volcano",
+    "ocean",
+    "river",
+    "lake",
+    "mountain",
+    "forest",
+    "desert",
+    "valley",
+    "beach",
+    "sunset",
+    "sunrise",
+    "storm",
+    "snow",
+    "rain",
+    "fog",
+    "fire",
+    "cloud",
+    "sky",
+    "tree",
+    "flower",
+    "grass",
+    "rock",
+    "sand",
+    "leaf",
+    "wave",
+    "waterfall",
+    "cave",
+    "island",
+    "volcano",
     # textures / materials
-    "wood", "metal", "glass", "stone", "fabric", "leather", "plastic",
-    "silk", "velvet", "marble", "concrete", "rust", "crystal", "foam",
+    "wood",
+    "metal",
+    "glass",
+    "stone",
+    "fabric",
+    "leather",
+    "plastic",
+    "silk",
+    "velvet",
+    "marble",
+    "concrete",
+    "rust",
+    "crystal",
+    "foam",
     # emotions / moods
-    "joy", "sadness", "anger", "fear", "surprise", "disgust", "love",
-    "hope", "peace", "energy", "calm", "chaos", "mystery", "nostalgia",
+    "joy",
+    "sadness",
+    "anger",
+    "fear",
+    "surprise",
+    "disgust",
+    "love",
+    "hope",
+    "peace",
+    "energy",
+    "calm",
+    "chaos",
+    "mystery",
+    "nostalgia",
     # food
-    "apple", "banana", "strawberry", "orange", "lemon", "grape", "bread",
-    "cheese", "coffee", "tea", "chocolate", "cake", "pizza",
+    "apple",
+    "banana",
+    "strawberry",
+    "orange",
+    "lemon",
+    "grape",
+    "bread",
+    "cheese",
+    "coffee",
+    "tea",
+    "chocolate",
+    "cake",
+    "pizza",
     # objects
-    "book", "chair", "table", "door", "window", "clock", "lamp", "mirror",
-    "phone", "camera", "music", "art", "painting", "sculpture",
+    "book",
+    "chair",
+    "table",
+    "door",
+    "window",
+    "clock",
+    "lamp",
+    "mirror",
+    "phone",
+    "camera",
+    "music",
+    "art",
+    "painting",
+    "sculpture",
     # places
-    "city", "village", "market", "garden", "park", "bridge", "road",
-    "station", "harbour", "castle", "temple", "church",
+    "city",
+    "village",
+    "market",
+    "garden",
+    "park",
+    "bridge",
+    "road",
+    "station",
+    "harbour",
+    "castle",
+    "temple",
+    "church",
     # actions / abstract
-    "running", "flying", "swimming", "dancing", "sleeping", "falling",
-    "glowing", "growing", "spinning", "melting", "floating", "exploding",
+    "running",
+    "flying",
+    "swimming",
+    "dancing",
+    "sleeping",
+    "falling",
+    "glowing",
+    "growing",
+    "spinning",
+    "melting",
+    "floating",
+    "exploding",
     # sensory
-    "loud", "quiet", "bright", "dark", "warm", "cold", "smooth", "rough",
-    "sharp", "soft", "heavy", "light", "fast", "slow",
+    "loud",
+    "quiet",
+    "bright",
+    "dark",
+    "warm",
+    "cold",
+    "smooth",
+    "rough",
+    "sharp",
+    "soft",
+    "heavy",
+    "light",
+    "fast",
+    "slow",
 ]
 
 

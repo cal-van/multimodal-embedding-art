@@ -81,6 +81,97 @@ def collect(ctx: click.Context, encoder, dataset_path, output_path, max_samples)
 
 
 # ---------------------------------------------------------------------------
+# sae collect-multimodal
+# ---------------------------------------------------------------------------
+
+
+@sae.command("collect-multimodal")
+@click.option(
+    "--encoder",
+    type=str,
+    default="languagebind",
+    show_default=True,
+    help="Canonical multimodal encoder (must expose encode_{image,audio,video,text}).",
+)
+@click.option(
+    "--dataset",
+    "dataset_path",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    required=True,
+    help=(
+        "Root directory scanned recursively for media files. Images / "
+        "audio / video are grouped by extension. A 'texts.txt' file at "
+        "the root (one prompt per line) is consumed as the text modality."
+    ),
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(),
+    required=True,
+    help="Directory to write per-modality *_embeddings.pt files.",
+)
+@click.option(
+    "--modalities",
+    type=str,
+    default="image,audio,video,text",
+    show_default=True,
+    help="Comma-separated subset of {image,audio,video,text}.",
+)
+@click.option(
+    "--max-samples-per-modality",
+    type=int,
+    default=None,
+    help="Optional cap; applied independently to each modality.",
+)
+@click.pass_context
+def collect_multimodal(
+    ctx: click.Context,
+    encoder: str,
+    dataset_path: str,
+    output_dir: str,
+    modalities: str,
+    max_samples_per_modality: int | None,
+) -> None:
+    """Collect per-modality embeddings for ``sae train-stack``.
+
+    Companion to ``sae collect`` (which is image-only) — this scans a
+    mixed-content dataset and emits the four ``*_embeddings.pt`` files
+    that the per-modality + shared MSAE training pipeline consumes.
+    """
+    loaded_config = ctx.obj.get("config", {}) if ctx.obj else {}
+    debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
+
+    try:
+        from embedding_art.encoders.defaults import create_default_registry
+        from embedding_art.sae.training import collect_multimodal_embeddings
+
+        device = loaded_config.get("device", "mps")
+        registry = create_default_registry()
+        encoder_instance = registry.load(encoder, device=device)
+        modality_list = [m.strip() for m in modalities.split(",") if m.strip()]
+
+        saved = collect_multimodal_embeddings(
+            encoder=encoder_instance,
+            dataset_path=Path(dataset_path),
+            output_dir=Path(output_dir),
+            modalities=modality_list,
+            max_samples_per_modality=max_samples_per_modality,
+        )
+
+        if not saved:
+            console.print(
+                "[yellow]No embeddings were collected. Verify the dataset directory "
+                "contains files of the requested modalities.[/yellow]"
+            )
+            return
+        for modality, path in saved.items():
+            console.print(f"[bold green]{modality:>5}: {path}[/bold green]")
+    except Exception as e:
+        handle_exception(e, debug_mode)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # sae train
 # ---------------------------------------------------------------------------
 
