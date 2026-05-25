@@ -106,7 +106,7 @@ def text_anchor_readout(
         embedding = embedding.unsqueeze(0)
     target_norm = F.normalize(embedding, dim=-1)  # [1, D]
 
-    vocab_embeddings = _encode_or_cache_vocab(encoder, vocab)  # [V, D]
+    vocab_embeddings = _encode_or_cache_vocab(encoder, vocab).to(embedding.device)  # [V, D]
 
     sims = (vocab_embeddings @ target_norm.squeeze(0)).cpu()  # [V]
     top_k = min(top_k, len(vocab))
