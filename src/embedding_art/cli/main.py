@@ -18,6 +18,7 @@ from embedding_art.cli.commands.grid import grid
 from embedding_art.cli.commands.interpolate import interpolate
 from embedding_art.cli.commands.interpolation import interpolate_v2
 from embedding_art.cli.commands.optimize import optimize
+from embedding_art.cli.commands.profile import profile
 from embedding_art.cli.commands.render import render
 from embedding_art.cli.commands.sae import sae
 from embedding_art.cli.commands.showcase import showcase
@@ -74,6 +75,7 @@ cli.add_command(sae)
 cli.add_command(interpolate_v2)
 cli.add_command(showcase)
 cli.add_command(anchor_compare)
+cli.add_command(profile)
 
 
 if __name__ == "__main__":
