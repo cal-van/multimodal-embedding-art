@@ -193,6 +193,9 @@ function RenderPreview({ modality, url }: { modality: string; url: string }) {
 function InterpretationBlock({ data }: { data: Record<string, unknown> }) {
     const textAnchor = data['text_anchor'];
     const sae = data['sae_decomposition'];
+    const probes = data['linear_probes'] as
+        | Record<string, number | Record<string, number>>
+        | undefined;
     return (
         <div className="text-xs text-dim flex flex-col gap-1">
             {Array.isArray(textAnchor) && textAnchor.length > 0 && (
@@ -217,8 +220,33 @@ function InterpretationBlock({ data }: { data: Record<string, unknown> }) {
                         .join(', ')}
                 </div>
             )}
+            {probes && Object.keys(probes).length > 0 && (
+                <div>
+                    <span className="text-[#a3a3a3]">linear probes:</span>{' '}
+                    {Object.entries(probes)
+                        .map(([name, value]) => formatProbeReading(name, value))
+                        .join(' · ')}
+                </div>
+            )}
         </div>
     );
+}
+
+function formatProbeReading(
+    name: string,
+    value: number | Record<string, number>,
+): string {
+    if (typeof value === 'number') {
+        return `${name}=${value.toFixed(2)}`;
+    }
+    // Multi-class: surface the argmax label + its probability.
+    const entries = Object.entries(value);
+    if (entries.length === 0) return `${name}=?`;
+    const [topLabel, topProb] = entries.reduce(
+        (best, cur) => (cur[1] > best[1] ? cur : best),
+        entries[0],
+    );
+    return `${name}: ${topLabel} (${topProb.toFixed(2)})`;
 }
 
 function EvaluationCard({ evaluation }: { evaluation: Record<string, unknown> }) {

@@ -232,6 +232,15 @@ VALID_TRACKS = ("honest", "natural")
     help="Compute the evaluation card (cross-encoder probes + cross-modal "
     "agreement matrix) for the showcase bundle.",
 )
+@click.option(
+    "--linear-probes-dir",
+    "linear_probes_dir",
+    type=click.Path(exists=True, dir_okay=True, file_okay=False),
+    default=None,
+    help="Directory containing a trained linear-probe manifest "
+    "(see `embed-art train-probes`). When provided, each modality's "
+    "interpretation bundle includes per-probe activations.",
+)
 @click.pass_context
 def showcase(
     ctx: click.Context,
@@ -251,6 +260,7 @@ def showcase(
     interpret: bool,
     sae_path: str | None,
     evaluate: bool,
+    linear_probes_dir: str | None,
 ) -> None:
     """Render one concept across all four modalities into a single showcase bundle."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
@@ -282,6 +292,7 @@ def showcase(
             interpret=interpret,
             sae_path=Path(sae_path) if sae_path else None,
             evaluate=evaluate,
+            linear_probes_dir=Path(linear_probes_dir) if linear_probes_dir else None,
         )
     except Exception as e:
         handle_exception(e, debug_mode)
@@ -307,6 +318,7 @@ def _showcase_impl(
     sae_path: Path | None = None,
     evaluate: bool = True,
     probe_encoders: dict[str, Any] | None = None,
+    linear_probes_dir: Path | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     """Orchestrate the per-modality renderings and assemble the bundle.
@@ -337,6 +349,7 @@ def _showcase_impl(
     engine = EmbeddingArtEngine.from_registry(registry, default_encoder=encoder_name, device=device)
     sae = _load_sae(sae_path) if sae_path else None
     sae_feature_labels = _load_sae_labels(sae_path) if sae_path else None
+    linear_probes = _load_linear_probes(linear_probes_dir) if linear_probes_dir else None
 
     multi_track = len(tracks) > 1
     per_track_manifests: dict[str, dict[str, Any]] = {}
@@ -376,6 +389,7 @@ def _showcase_impl(
             compile_mode=compile_mode,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
+            linear_probes=linear_probes,
             interpret=interpret,
             evaluate=evaluate,
             probe_encoders=probe_encoders,
@@ -440,6 +454,7 @@ def _render_track(
     compile_mode: str = "none",
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
+    linear_probes: dict[str, Any] | None = None,
     interpret: bool = True,
     evaluate: bool = True,
     probe_encoders: dict[str, Any] | None = None,
@@ -513,6 +528,7 @@ def _render_track(
             interpret=interpret,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
+            linear_probes=linear_probes,
         )
         _emit_modality_complete("image", manifest["modalities"]["image"])
 
@@ -530,6 +546,7 @@ def _render_track(
             interpret=interpret,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
+            linear_probes=linear_probes,
         )
         _emit_modality_complete("audio", manifest["modalities"]["audio"])
 
@@ -547,6 +564,7 @@ def _render_track(
             interpret=interpret,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
+            linear_probes=linear_probes,
         )
         _emit_modality_complete("video", manifest["modalities"]["video"])
 
@@ -641,6 +659,7 @@ def _render_image(
     interpret: bool = True,
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
+    linear_probes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     console.print("[bold]Rendering image...[/bold]")
     if backbone == "sd35":
@@ -676,6 +695,7 @@ def _render_image(
             encoder=encoder,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
+            linear_probes=linear_probes,
             final_similarity=result.final_similarity,
             output_dir=output_dir,
             modality="image",
@@ -697,6 +717,7 @@ def _render_audio(
     interpret: bool = True,
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
+    linear_probes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     console.print(f"[bold]Rendering audio ({backbone})...[/bold]")
     if backbone == "stable-audio-open":
@@ -736,6 +757,7 @@ def _render_audio(
             encoder=encoder,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
+            linear_probes=linear_probes,
             final_similarity=result.final_similarity,
             output_dir=output_dir,
             modality="audio",
@@ -757,6 +779,7 @@ def _render_video(
     interpret: bool = True,
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
+    linear_probes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     console.print(f"[bold]Rendering video ({backbone})...[/bold]")
     if backbone == "ltx-video":
@@ -795,6 +818,7 @@ def _render_video(
             encoder=encoder,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
+            linear_probes=linear_probes,
             final_similarity=result.final_similarity,
             output_dir=output_dir,
             modality="video",
@@ -854,6 +878,7 @@ def _run_modality_interpretation(
     modality: str,
     embedding_history: Any = None,
     similarity_history: Any = None,
+    linear_probes: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Compute the interpretation bundle for one modality and save its
     attribution map to disk. Returns the JSON-friendly dict to inline in the
@@ -877,6 +902,7 @@ def _run_modality_interpretation(
             final_similarity=float(final_similarity),
             embedding_history=embedding_history,
             similarity_history=similarity_history,
+            linear_probes=linear_probes,
         )
 
         attribution_path = output_dir / f"{modality}_attribution.pt"
@@ -900,6 +926,38 @@ def _run_modality_interpretation(
     except Exception as exc:
         logger.warning("Interpretation bundle for %s failed: %s", modality, exc, exc_info=True)
         return None
+
+
+def _load_linear_probes(probes_dir: Path) -> dict[str, Any] | None:
+    """Load a directory of trained linear probes as a name → probe dict.
+
+    The returned dict is the shape :class:`InterpretationBundle` expects
+    for its ``linear_probes`` argument: callable probes that take an
+    embedding tensor and return either a single float or a label →
+    probability mapping.
+    """
+    try:
+        from embedding_art.evaluation.linear_probes import (
+            evaluate_probes,
+            load_probe_manifest,
+        )
+
+        probes = load_probe_manifest(probes_dir)
+    except Exception as exc:
+        logger.warning("Could not load linear probes from %s: %s", probes_dir, exc)
+        return None
+
+    # ``InterpretationBundle._run_linear_probes`` invokes each value
+    # like ``probe(current_emb)``. Wrap so the call returns the
+    # appropriately-shaped scalar/dict.
+    wrapped: dict[str, Any] = {}
+    for name, probe in probes.items():
+
+        def _wrap(emb: Any, _probe: Any = probe, _name: str = name) -> Any:
+            return evaluate_probes(emb, {_name: _probe})[_name]
+
+        wrapped[name] = _wrap
+    return wrapped
 
 
 def _load_sae(sae_path: Path) -> Any:

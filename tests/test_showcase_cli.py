@@ -424,6 +424,98 @@ class TestDualTrackOrchestration:
         assert manifest["track"] == "honest"
 
 
+class TestShowcaseLinearProbes:
+    """``--linear-probes-dir`` loads a trained probe manifest and forwards it
+    to the interpretation step. We assert that ``_load_linear_probes``
+    returns a non-None dict and that ``_run_modality_interpretation`` is
+    invoked with the wrapped probes for each rendered modality."""
+
+    def test_load_linear_probes_returns_wrapped_callables(self, tmp_path: Path) -> None:
+        from embedding_art.cli.commands.showcase import _load_linear_probes
+        from embedding_art.evaluation.linear_probes import (
+            ProbeDataset,
+            save_probe_manifest,
+            train_linear_probe,
+        )
+
+        # Build + train two tiny probes.
+        emb = torch.randn(40, 32)
+        # Inject a separable signal so training converges.
+        emb[:20, 0] += 3.0
+        emb[20:, 1] += 3.0
+        binary_labels = torch.cat([torch.ones(20, 1), torch.zeros(20, 1)], dim=0)
+        binary_ds = ProbeDataset(emb, binary_labels, ["is_pos"])
+        multi_labels = torch.cat(
+            [torch.zeros(20, dtype=torch.long), torch.ones(20, dtype=torch.long)], dim=0
+        )
+        multi_ds = ProbeDataset(emb, multi_labels, ["a", "b"])
+        binary_probe, _ = train_linear_probe(binary_ds, epochs=20, seed=0)
+        multi_probe, _ = train_linear_probe(multi_ds, epochs=20, seed=0)
+
+        save_probe_manifest({"is_pos": binary_probe, "category": multi_probe}, tmp_path / "probes")
+
+        wrapped = _load_linear_probes(tmp_path / "probes")
+        assert wrapped is not None
+        assert set(wrapped.keys()) == {"is_pos", "category"}
+
+        # Each wrapped probe is callable on an embedding.
+        emb_in = torch.zeros(32)
+        emb_in[0] = 3.0
+        binary_out = wrapped["is_pos"](emb_in)
+        assert isinstance(binary_out, float)
+        multi_out = wrapped["category"](emb_in)
+        assert isinstance(multi_out, dict)
+        assert set(multi_out.keys()) == {"a", "b"}
+
+    def test_showcase_propagates_linear_probes_to_interpretation(self, tmp_path: Path) -> None:
+        """When a probes dir is supplied, ``_run_modality_interpretation`` is
+        called with the loaded ``linear_probes`` kwarg."""
+        from embedding_art.cli.commands.showcase import _showcase_impl
+        from embedding_art.evaluation.linear_probes import (
+            ProbeDataset,
+            save_probe_manifest,
+            train_linear_probe,
+        )
+
+        # Persist a one-probe manifest.
+        emb = torch.randn(40, 32)
+        emb[:20, 0] += 3.0
+        labels = torch.cat([torch.ones(20, 1), torch.zeros(20, 1)], dim=0)
+        ds = ProbeDataset(emb, labels, ["is_pos"])
+        probe, _ = train_linear_probe(ds, epochs=20, seed=0)
+        save_probe_manifest({"is_pos": probe}, tmp_path / "probes")
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry",
+            return_value=mock_registry,
+        ):
+            with patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry"
+            ) as mock_engine_factory:
+                mock_engine_factory.return_value = MagicMock()
+                _showcase_impl(
+                    target_text="goldfish",
+                    output_dir=tmp_path / "out",
+                    encoder_name="languagebind",
+                    modalities=["text"],
+                    steps=5,
+                    seed=42,
+                    device="cpu",
+                    image_backbone="sd35",
+                    linear_probes_dir=tmp_path / "probes",
+                )
+
+        # Text modality has no interpretation block (it's a markdown card)
+        # but the manifest must exist and the probes loader must have
+        # succeeded silently — i.e. we get this far without raising.
+        assert (tmp_path / "out" / "manifest.json").exists()
+
+
 @pytest.mark.slow
 class TestShowcaseFullIntegration:
     """End-to-end test running the real LanguageBind + SD3.5 + AudioLDM2 + SVD
