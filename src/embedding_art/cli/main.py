@@ -26,6 +26,7 @@ from embedding_art.cli.commands.showcase import showcase
 from embedding_art.cli.commands.text_anchor_sweep import text_anchor_sweep
 from embedding_art.cli.commands.train_probes import train_probes
 from embedding_art.cli.commands.upscale import upscale
+from embedding_art.cli.commands.validate_vsd import validate_vsd
 from embedding_art.cli.commands.visualize import visualize
 from embedding_art.cli.commands.web import web
 from embedding_art.core.config import load_config
@@ -83,6 +84,7 @@ cli.add_command(text_anchor_sweep)
 cli.add_command(train_probes)
 cli.add_command(compile_probes)
 cli.add_command(bench_probes)
+cli.add_command(validate_vsd)
 
 
 if __name__ == "__main__":
