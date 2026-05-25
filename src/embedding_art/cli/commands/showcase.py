@@ -17,16 +17,40 @@ shared space. This is the structural property the rest of the system needs
 for cross-modal showcase to even make sense — it's the M1 LanguageBind
 foundation paying off.
 
-Per-modality generator choices (M10a status)
---------------------------------------------
+Per-modality generator choices
+------------------------------
 * **Image** — SD3.5-medium VAE (M2a). 16-channel flow-matching latent;
-  materially sharper than SDXL's 4-channel DDPM latent.
-* **Audio** — AudioLDM2. Stable Audio Open upgrade is the M6 work item.
-* **Video** — SVD (Stable Video Diffusion). LTX-Video upgrade is the M6
-  work item.
+  materially sharper than SDXL's 4-channel DDPM latent. SDXL is still
+  selectable via ``--image-backbone sdxl`` for ablation.
+* **Audio** — Stable Audio Open 1.0 (M6 default). 64-channel DAC latent,
+  44.1 kHz, up to 47-sec clips. AudioLDM2 selectable via
+  ``--audio-backbone audioldm2`` for ablation.
+* **Video** — LTX-Video 0.9.5 (M6 default). 128-channel CausalVideoAutoencoder
+  latent, 768×512 @ 24 fps. SVD selectable via ``--video-backbone svd``
+  for ablation.
 * **Text** — A literal text card describing the target concept and the per-
   modality cosine similarities. Required for the side-by-side showcase even
   though there is no 'text rendering' problem to solve.
+
+Dual-track rendering
+--------------------
+The ``--tracks`` flag selects one or both of:
+
+* **honest** — strong embedding/feature alignment, minimal regularisation.
+  Renders 'what the model thinks' the concept looks like. The interpretability
+  artefact.
+* **natural** — reduced embedding alignment, heavy regularisation. Renders
+  a more conventionally-natural-looking sample of the concept. The aesthetic
+  artefact.
+
+When both are requested (``--tracks honest,natural``), each is rendered
+into its own subdirectory and the top-level ``manifest.json`` references
+both. The contrast between the two is the showcase artefact.
+
+Note: the 'natural' track currently uses heavy regularisation as a
+proxy for the M2b VSD prior. When M2b real-weight integration lands,
+the natural track will switch to VSD with the existing ``--tracks``
+flag unchanged.
 
 Output layout
 -------------
@@ -66,6 +90,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_STEPS = 1000
 DEFAULT_ENCODER = "languagebind"
+VALID_TRACKS = ("honest", "natural")
 
 
 @click.command()
@@ -127,6 +152,32 @@ DEFAULT_ENCODER = "languagebind"
     help="Image generator backbone. SD3.5 is the M2a canonical default.",
 )
 @click.option(
+    "--audio-backbone",
+    type=click.Choice(["stable-audio-open", "audioldm2"]),
+    default="stable-audio-open",
+    show_default=True,
+    help="Audio generator backbone. Stable Audio Open is the M6 canonical default "
+    "(44.1 kHz, 64-ch DAC). audioldm2 selectable for ablation.",
+)
+@click.option(
+    "--video-backbone",
+    type=click.Choice(["ltx-video", "svd"]),
+    default="ltx-video",
+    show_default=True,
+    help="Video generator backbone. LTX-Video 0.9.5 is the M6 canonical default "
+    "(768×512 @ 24 fps). svd selectable for ablation.",
+)
+@click.option(
+    "--tracks",
+    type=str,
+    default="honest",
+    show_default=True,
+    help="Comma-separated subset of {honest,natural}. honest = high-alignment, "
+    "low-regularisation (the interpretability artefact). natural = reduced "
+    "alignment + heavy regularisation (the aesthetic artefact). When both are "
+    "selected each is rendered into a subdirectory of the output.",
+)
+@click.option(
     "--interpret/--no-interpret",
     default=True,
     show_default=True,
@@ -158,12 +209,24 @@ def showcase(
     seed: int | None,
     device: str,
     image_backbone: str,
+    audio_backbone: str,
+    video_backbone: str,
+    tracks: str,
     interpret: bool,
     sae_path: str | None,
     evaluate: bool,
 ) -> None:
     """Render one concept across all four modalities into a single showcase bundle."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
+
+    track_list = [t.strip() for t in tracks.split(",") if t.strip()]
+    for t in track_list:
+        if t not in VALID_TRACKS:
+            click.echo(
+                f"Invalid track '{t}'. Valid tracks: {', '.join(VALID_TRACKS)}",
+                err=True,
+            )
+            sys.exit(2)
 
     try:
         _showcase_impl(
@@ -175,6 +238,9 @@ def showcase(
             seed=seed,
             device=device,
             image_backbone=image_backbone,
+            audio_backbone=audio_backbone,
+            video_backbone=video_backbone,
+            tracks=track_list,
             interpret=interpret,
             sae_path=Path(sae_path) if sae_path else None,
             evaluate=evaluate,
@@ -194,15 +260,26 @@ def _showcase_impl(
     seed: int | None,
     device: str,
     image_backbone: str,
+    audio_backbone: str = "stable-audio-open",
+    video_backbone: str = "ltx-video",
+    tracks: list[str] | None = None,
     interpret: bool = True,
     sae_path: Path | None = None,
     evaluate: bool = True,
 ) -> None:
-    """Orchestrate the per-modality renderings and assemble the bundle."""
+    """Orchestrate the per-modality renderings and assemble the bundle.
+
+    When ``tracks`` is a single track, the bundle is written flat into
+    ``output_dir``. When ``tracks`` requests both honest and natural, each
+    track gets its own subdirectory and the top-level ``manifest.json``
+    summarises both.
+    """
     from embedding_art.core.concept import Concept
-    from embedding_art.core.config import LossConfig, OptimizationConfig
     from embedding_art.core.engine import EmbeddingArtEngine
     from embedding_art.encoders.defaults import create_default_registry
+
+    if tracks is None:
+        tracks = ["honest"]
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -214,12 +291,104 @@ def _showcase_impl(
     target = Concept.from_text(target_text, encoder)
     console.print(f"  embedding dim: {target.embedding.shape[-1]}")
 
+    # The engine + SAE are shared across tracks; only LossConfig differs.
+    engine = EmbeddingArtEngine.from_registry(registry, default_encoder=encoder_name, device=device)
+    sae = _load_sae(sae_path) if sae_path else None
+    sae_feature_labels = _load_sae_labels(sae_path) if sae_path else None
+
+    multi_track = len(tracks) > 1
+    per_track_manifests: dict[str, dict[str, Any]] = {}
+
+    for track in tracks:
+        track_output_dir = (output_dir / track) if multi_track else output_dir
+        track_output_dir.mkdir(parents=True, exist_ok=True)
+        per_track_manifests[track] = _render_track(
+            track=track,
+            target=target,
+            target_text=target_text,
+            encoder=encoder,
+            encoder_name=encoder_name,
+            engine=engine,
+            modalities=modalities,
+            steps=steps,
+            seed=seed,
+            device=device,
+            output_dir=track_output_dir,
+            image_backbone=image_backbone,
+            audio_backbone=audio_backbone,
+            video_backbone=video_backbone,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
+            interpret=interpret,
+            evaluate=evaluate,
+        )
+
+    if multi_track:
+        top_manifest: dict[str, Any] = {
+            "concept": {
+                "text": target_text,
+                "description": target.description,
+                "embedding_dim": int(target.embedding.shape[-1]),
+            },
+            "encoder": encoder_name,
+            "device": device,
+            "steps": steps,
+            "seed": seed,
+            "tracks": tracks,
+            "image_backbone": image_backbone,
+            "audio_backbone": audio_backbone,
+            "video_backbone": video_backbone,
+            "per_track": {
+                t: {
+                    "path": t,
+                    "manifest": f"{t}/manifest.json",
+                    "summary": _summarise_track(per_track_manifests[t]),
+                }
+                for t in tracks
+            },
+        }
+        top_manifest_path = output_dir / "manifest.json"
+        top_manifest_path.write_text(json.dumps(top_manifest, indent=2))
+        console.print(f"[bold green]Multi-track manifest written: {top_manifest_path}[/bold green]")
+        console.print(f"[bold green]Showcase complete: {output_dir}[/bold green]")
+
+
+def _render_track(
+    *,
+    track: str,
+    target: Any,
+    target_text: str,
+    encoder: Any,
+    encoder_name: str,
+    engine: Any,
+    modalities: list[str],
+    steps: int,
+    seed: int | None,
+    device: str,
+    output_dir: Path,
+    image_backbone: str,
+    audio_backbone: str,
+    video_backbone: str,
+    sae: Any,
+    sae_feature_labels: dict[int, str] | None,
+    interpret: bool,
+    evaluate: bool,
+) -> dict[str, Any]:
+    """Render a single track (honest or natural) into ``output_dir``.
+
+    Returns the per-track manifest dict and writes it to
+    ``output_dir/manifest.json``.
+    """
+    from embedding_art.core.config import OptimizationConfig
+
     config = OptimizationConfig(
         steps=steps,
         learning_rate=0.1,
         seed=seed,
-        loss=LossConfig(similarity_weight=1.0, feature_matching_weight=0.0),
+        loss=_build_track_loss_config(track),
     )
+
+    console.print(f"[bold magenta]Rendering track: {track}[/bold magenta]")
 
     manifest: dict[str, Any] = {
         "concept": {
@@ -231,14 +400,12 @@ def _showcase_impl(
         "device": device,
         "steps": steps,
         "seed": seed,
+        "track": track,
         "image_backbone": image_backbone,
+        "audio_backbone": audio_backbone,
+        "video_backbone": video_backbone,
         "modalities": {},
     }
-
-    engine = EmbeddingArtEngine.from_registry(registry, default_encoder=encoder_name, device=device)
-
-    sae = _load_sae(sae_path) if sae_path else None
-    sae_feature_labels = _load_sae_labels(sae_path) if sae_path else None
 
     if "image" in modalities:
         manifest["modalities"]["image"] = _render_image(
@@ -264,6 +431,7 @@ def _showcase_impl(
             config=config,
             output_dir=output_dir,
             device=device,
+            backbone=audio_backbone,
             interpret=interpret,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
@@ -278,6 +446,7 @@ def _showcase_impl(
             config=config,
             output_dir=output_dir,
             device=device,
+            backbone=video_backbone,
             interpret=interpret,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
@@ -303,7 +472,53 @@ def _showcase_impl(
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     console.print(f"[bold green]Manifest written: {manifest_path}[/bold green]")
-    console.print(f"[bold green]Showcase complete: {output_dir}[/bold green]")
+    return manifest
+
+
+def _build_track_loss_config(track: str) -> Any:
+    """Return the LossConfig for the requested track.
+
+    * **honest** — high similarity, high feature-matching, minimal
+      regularisation. The 'what the model thinks' artefact. Until M2b
+      VSD is wired this is the v3 default.
+    * **natural** — reduced similarity, reduced feature-matching, heavy
+      regularisation. Currently a heuristic proxy for the VSD-prior natural
+      track; the regulariser balance is calibrated to produce visibly more
+      conventionally-natural outputs without abandoning the target. When
+      M2b lands the VSD prior plugs in here without changing the surface.
+    """
+    from embedding_art.core.config import LossConfig
+    from embedding_art.regularizers.base import CompositeRegularizer
+
+    if track == "honest":
+        return LossConfig(
+            similarity_weight=1.0,
+            feature_matching_weight=0.5,
+            regularization=CompositeRegularizer.minimal(),
+        )
+    if track == "natural":
+        return LossConfig(
+            similarity_weight=0.4,
+            feature_matching_weight=0.15,
+            regularization=CompositeRegularizer.heavy(),
+        )
+    raise ValueError(f"Unknown track '{track}'. Valid tracks: {VALID_TRACKS}")
+
+
+def _summarise_track(track_manifest: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a per-track manifest to a small summary block for the top-level."""
+    summary: dict[str, Any] = {}
+    for mod, data in track_manifest.get("modalities", {}).items():
+        if mod == "text":
+            continue
+        summary[mod] = {
+            "path": data.get("path"),
+            "final_similarity": data.get("final_similarity"),
+            "backbone": data.get("backbone"),
+        }
+    if "evaluation" in track_manifest:
+        summary["_evaluation"] = track_manifest["evaluation"]
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -376,14 +591,25 @@ def _render_audio(
     config: Any,
     output_dir: Path,
     device: str,
+    backbone: str = "stable-audio-open",
     interpret: bool = True,
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
 ) -> dict[str, Any]:
-    console.print("[bold]Rendering audio...[/bold]")
-    from embedding_art.generators import AudioLDMGenerator
+    console.print(f"[bold]Rendering audio ({backbone})...[/bold]")
+    if backbone == "stable-audio-open":
+        from embedding_art.generators.stable_audio_open import StableAudioOpenGenerator
 
-    generator = AudioLDMGenerator(device=device)
+        generator = StableAudioOpenGenerator(device=device)
+    elif backbone == "audioldm2":
+        from embedding_art.generators import AudioLDMGenerator
+
+        generator = AudioLDMGenerator(device=device)
+    else:
+        raise ValueError(
+            f"Unknown audio backbone '{backbone}'. Valid: stable-audio-open, audioldm2."
+        )
+
     engine.register_generator("audio", generator)
     result = engine.render(
         target,
@@ -398,7 +624,7 @@ def _render_audio(
     modality_record: dict[str, Any] = {
         "path": str(audio_path.relative_to(output_dir)),
         "final_similarity": float(result.final_similarity),
-        "backbone": "audioldm2",
+        "backbone": backbone,
     }
 
     if interpret:
@@ -425,14 +651,23 @@ def _render_video(
     config: Any,
     output_dir: Path,
     device: str,
+    backbone: str = "ltx-video",
     interpret: bool = True,
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
 ) -> dict[str, Any]:
-    console.print("[bold]Rendering video...[/bold]")
-    from embedding_art.generators import SVDVideoGenerator
+    console.print(f"[bold]Rendering video ({backbone})...[/bold]")
+    if backbone == "ltx-video":
+        from embedding_art.generators.ltx_video import LTXVideoGenerator
 
-    generator = SVDVideoGenerator(device=device)
+        generator = LTXVideoGenerator(device=device)
+    elif backbone == "svd":
+        from embedding_art.generators import SVDVideoGenerator
+
+        generator = SVDVideoGenerator(device=device)
+    else:
+        raise ValueError(f"Unknown video backbone '{backbone}'. Valid: ltx-video, svd.")
+
     engine.register_generator("video", generator)
     result = engine.render(
         target,
@@ -448,7 +683,7 @@ def _render_video(
     modality_record: dict[str, Any] = {
         "path": str(written.relative_to(output_dir)),
         "final_similarity": float(result.final_similarity),
-        "backbone": "svd",
+        "backbone": backbone,
     }
 
     if interpret:

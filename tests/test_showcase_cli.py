@@ -65,6 +65,30 @@ class TestShowcaseFlagDefaults:
         result = runner.invoke(showcase, ["--help"])
         assert "sd35" in result.output
 
+    def test_default_audio_backbone_is_stable_audio_open(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(showcase, ["--help"])
+        assert "stable-audio-open" in result.output
+        assert "audioldm2" in result.output
+
+    def test_default_video_backbone_is_ltx_video(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(showcase, ["--help"])
+        assert "ltx-video" in result.output
+        assert "svd" in result.output
+
+    def test_tracks_flag_documented(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(showcase, ["--help"])
+        assert "honest" in result.output
+        assert "natural" in result.output
+
+    def test_invalid_track_rejected(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(showcase, ["-t", "x", "-o", "/tmp/out", "--tracks", "bogus"])
+        assert result.exit_code != 0
+        assert "track" in result.output.lower() or "bogus" in result.output
+
     def test_required_target_text(self) -> None:
         """--target-text is mandatory."""
         runner = CliRunner()
@@ -225,6 +249,122 @@ class TestShowcaseInterpretationManifest:
         # Evaluation card should still appear (empty cross-modal matrix, but
         # the structure is there).
         assert "evaluation" in manifest
+
+
+class TestTrackLossConfig:
+    """`_build_track_loss_config` returns distinct profiles for honest vs natural."""
+
+    def test_honest_has_higher_similarity_than_natural(self) -> None:
+        from embedding_art.cli.commands.showcase import _build_track_loss_config
+
+        honest = _build_track_loss_config("honest")
+        natural = _build_track_loss_config("natural")
+        assert honest.similarity_weight > natural.similarity_weight
+        assert honest.feature_matching_weight > natural.feature_matching_weight
+
+    def test_natural_has_heavier_regularisation(self) -> None:
+        from embedding_art.cli.commands.showcase import _build_track_loss_config
+
+        honest = _build_track_loss_config("honest")
+        natural = _build_track_loss_config("natural")
+        assert honest.regularization is not None
+        assert natural.regularization is not None
+        # Heavy regulariser has strictly more components and higher weights
+        # than minimal — see CompositeRegularizer.heavy vs .minimal.
+        n_honest_regs = len(honest.regularization.regularizers)
+        n_natural_regs = len(natural.regularization.regularizers)
+        assert n_natural_regs >= n_honest_regs
+
+    def test_unknown_track_raises(self) -> None:
+        from embedding_art.cli.commands.showcase import _build_track_loss_config
+
+        with pytest.raises(ValueError, match="Unknown track"):
+            _build_track_loss_config("bogus")
+
+
+class TestDualTrackOrchestration:
+    """Both honest + natural tracks land into ``<output>/<track>/`` subdirs
+    with a top-level summary manifest."""
+
+    def test_two_tracks_produce_subdirs_and_top_manifest(self, tmp_path: Path) -> None:
+        from embedding_art.cli.commands.showcase import _showcase_impl
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry",
+            return_value=mock_registry,
+        ):
+            with patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry"
+            ) as mock_engine_factory:
+                mock_engine_factory.return_value = MagicMock()
+
+                _showcase_impl(
+                    target_text="goldfish",
+                    output_dir=tmp_path,
+                    encoder_name="languagebind",
+                    modalities=["text"],
+                    steps=10,
+                    seed=42,
+                    device="cpu",
+                    image_backbone="sd35",
+                    audio_backbone="stable-audio-open",
+                    video_backbone="ltx-video",
+                    tracks=["honest", "natural"],
+                )
+
+        assert (tmp_path / "honest" / "manifest.json").exists()
+        assert (tmp_path / "natural" / "manifest.json").exists()
+        top = json.loads((tmp_path / "manifest.json").read_text())
+        assert top["tracks"] == ["honest", "natural"]
+        assert "per_track" in top
+        assert set(top["per_track"].keys()) == {"honest", "natural"}
+        assert top["per_track"]["honest"]["manifest"] == "honest/manifest.json"
+        assert top["per_track"]["natural"]["manifest"] == "natural/manifest.json"
+        assert top["audio_backbone"] == "stable-audio-open"
+        assert top["video_backbone"] == "ltx-video"
+
+    def test_single_track_writes_flat_layout(self, tmp_path: Path) -> None:
+        """Single-track render preserves the flat layout (no subdir)."""
+        from embedding_art.cli.commands.showcase import _showcase_impl
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry",
+            return_value=mock_registry,
+        ):
+            with patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry"
+            ) as mock_engine_factory:
+                mock_engine_factory.return_value = MagicMock()
+
+                _showcase_impl(
+                    target_text="goldfish",
+                    output_dir=tmp_path,
+                    encoder_name="languagebind",
+                    modalities=["text"],
+                    steps=10,
+                    seed=42,
+                    device="cpu",
+                    image_backbone="sd35",
+                    audio_backbone="stable-audio-open",
+                    video_backbone="ltx-video",
+                    tracks=["honest"],
+                )
+
+        # Flat layout: manifest at root, no honest/ subdir.
+        assert (tmp_path / "manifest.json").exists()
+        assert not (tmp_path / "honest").exists()
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        assert manifest["track"] == "honest"
 
 
 @pytest.mark.slow
