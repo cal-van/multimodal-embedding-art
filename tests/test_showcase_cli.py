@@ -535,3 +535,176 @@ class TestShowcaseFullIntegration:
             image_backbone="sd35",
         )
         assert (tmp_path / "manifest.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# M8: probe loader + seed-stability
+# ---------------------------------------------------------------------------
+
+
+class TestLoadProbeEncoders:
+    """``_load_probe_encoders`` resolves names through the registry."""
+
+    def test_empty_list_returns_none(self) -> None:
+        from embedding_art.cli.commands.showcase import _load_probe_encoders
+
+        assert _load_probe_encoders([], device="cpu") is None
+
+    def test_resolves_valid_probe(self) -> None:
+        from embedding_art.cli.commands.showcase import _load_probe_encoders
+
+        fake_encoder = MagicMock()
+        registry = MagicMock()
+        registry.load.return_value = fake_encoder
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry", return_value=registry
+        ):
+            probes = _load_probe_encoders(["siglip2-so400m"], device="cpu")
+        assert probes is not None
+        assert probes == {"siglip2-so400m": fake_encoder}
+        registry.load.assert_called_once_with("siglip2-so400m", device="cpu")
+
+    def test_skips_failing_probe_and_keeps_others(self) -> None:
+        from embedding_art.cli.commands.showcase import _load_probe_encoders
+
+        good = MagicMock()
+
+        def loader(name: str, device: str):  # noqa: ANN001 - test stub
+            if name == "broken":
+                raise RuntimeError("download failed")
+            return good
+
+        registry = MagicMock()
+        registry.load.side_effect = loader
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry", return_value=registry
+        ):
+            probes = _load_probe_encoders(["broken", "clap-general"], device="cpu")
+        assert probes == {"clap-general": good}
+
+    def test_all_failing_returns_none(self) -> None:
+        from embedding_art.cli.commands.showcase import _load_probe_encoders
+
+        registry = MagicMock()
+        registry.load.side_effect = RuntimeError("nope")
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry", return_value=registry
+        ):
+            assert _load_probe_encoders(["x"], device="cpu") is None
+
+
+class TestSeedStability:
+    """``--seed-stability N`` runs N extra renders and aggregates variance."""
+
+    def _patch_render_track(self, similarities_per_run: list[dict[str, float]]):
+        """Return a side-effect that yields a per-run manifest stub."""
+        runs = iter(similarities_per_run)
+
+        def fake_render_track(**kwargs):
+            sims = next(runs)
+            output_dir = kwargs["output_dir"]
+            output_dir.mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "track": kwargs["track"],
+                "modalities": {
+                    mod: {"final_similarity": sim, "path": f"{mod}.bin"}
+                    for mod, sim in sims.items()
+                },
+            }
+            (output_dir / "manifest.json").write_text(json.dumps(manifest))
+            return manifest
+
+        return fake_render_track
+
+    def test_zero_disables(self, tmp_path: Path) -> None:
+        from embedding_art.cli.commands.showcase import _showcase_impl
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry",
+            return_value=mock_registry,
+        ):
+            with patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry"
+            ) as mock_engine_factory:
+                mock_engine_factory.return_value = MagicMock()
+                _showcase_impl(
+                    target_text="thunder",
+                    output_dir=tmp_path,
+                    encoder_name="languagebind",
+                    modalities=["text"],
+                    steps=1,
+                    seed=0,
+                    device="cpu",
+                    image_backbone="sd35",
+                    seed_stability=0,
+                )
+
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        evaluation = manifest.get("evaluation") or {}
+        assert "seed_stability" not in evaluation
+        # No .stability subdirectory should have been created.
+        assert not (tmp_path / ".stability").exists()
+
+    def test_extra_runs_produce_per_modality_block(self, tmp_path: Path) -> None:
+        """With seed_stability=2 + image+text modalities, the evaluation
+        card should report mean/std for the image modality across the 2
+        extra runs."""
+        from embedding_art.cli.commands.showcase import _showcase_impl
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        fake_render = self._patch_render_track(
+            similarities_per_run=[
+                # Canonical run (seed 0, used by main showcase loop)
+                {"image": 0.80, "text": 1.0},
+                # Stability runs (seed 1, seed 2)
+                {"image": 0.82, "text": 1.0},
+                {"image": 0.78, "text": 1.0},
+            ]
+        )
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry",
+            return_value=mock_registry,
+        ):
+            with patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry"
+            ) as mock_engine_factory:
+                mock_engine_factory.return_value = MagicMock()
+                with patch(
+                    "embedding_art.cli.commands.showcase._render_track",
+                    side_effect=fake_render,
+                ):
+                    _showcase_impl(
+                        target_text="thunder",
+                        output_dir=tmp_path,
+                        encoder_name="languagebind",
+                        modalities=["image", "text"],
+                        steps=1,
+                        seed=0,
+                        device="cpu",
+                        image_backbone="sd35",
+                        seed_stability=2,
+                        evaluate=False,
+                    )
+
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        stab = manifest["evaluation"]["seed_stability"]
+        assert stab["n_extra_runs"] == 2
+        assert stab["base_seed"] == 0
+        image = stab["per_modality"]["image"]
+        assert image["n_seeds"] == 2
+        # mean of [0.82, 0.78] = 0.80
+        assert abs(image["mean_similarity"] - 0.80) < 1e-6
+        # Text modality is excluded (only image/audio/video tracked).
+        assert "text" not in stab["per_modality"]

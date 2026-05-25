@@ -253,6 +253,30 @@ VALID_TRACKS = ("honest", "natural")
     "recommended values; 0.25 is a conservative starting point for "
     "image/audio/video tracks.",
 )
+@click.option(
+    "--probes",
+    type=str,
+    default="",
+    show_default=True,
+    help="Comma-separated cross-encoder probes to run during the M8 "
+    "evaluation card (e.g. 'siglip2-so400m,clap-general'). Each probe "
+    "re-encodes the rendered outputs with an independent encoder and "
+    "reports cosine similarity to that encoder's projection of the "
+    "target text — the 'does another encoder agree?' check. Probes are "
+    "resolved through the same registry as --encoder; unknown names are "
+    "skipped with a warning. Default empty (no probes).",
+)
+@click.option(
+    "--seed-stability",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Re-run the canonical rendering this many additional times with "
+    "distinct seeds and report the variance in per-modality final cosine "
+    "similarity. 0 disables (the default — single-seed run). Values >= 1 "
+    "add a `seed_stability` block to the evaluation card with mean/std "
+    "per modality. Heavy: each extra run is a full optimisation pass.",
+)
 @click.pass_context
 def showcase(
     ctx: click.Context,
@@ -274,6 +298,8 @@ def showcase(
     evaluate: bool,
     linear_probes_dir: str | None,
     text_anchor_weight: float,
+    probes: str,
+    seed_stability: int,
 ) -> None:
     """Render one concept across all four modalities into a single showcase bundle."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
@@ -286,6 +312,11 @@ def showcase(
                 err=True,
             )
             sys.exit(2)
+
+    probe_encoders = _load_probe_encoders(
+        [p.strip() for p in probes.split(",") if p.strip()],
+        device=device,
+    )
 
     try:
         _showcase_impl(
@@ -302,6 +333,8 @@ def showcase(
             tracks=track_list,
             autocast_dtype=autocast_dtype,
             compile_mode=compile_mode,
+            probe_encoders=probe_encoders,
+            seed_stability=seed_stability,
             interpret=interpret,
             sae_path=Path(sae_path) if sae_path else None,
             evaluate=evaluate,
@@ -332,6 +365,7 @@ def _showcase_impl(
     sae_path: Path | None = None,
     evaluate: bool = True,
     probe_encoders: dict[str, Any] | None = None,
+    seed_stability: int = 0,
     linear_probes_dir: Path | None = None,
     text_anchor_weight: float = 0.0,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
@@ -418,6 +452,47 @@ def _showcase_impl(
                 "track": track,
                 "summary": _summarise_track(per_track_manifests[track]),
             },
+        )
+
+    if seed_stability > 0:
+        # Re-run only the honest (or single) track N extra times with
+        # distinct seeds; aggregate per-modality final similarity.
+        stability_track = tracks[0]
+        stability_report = _compute_seed_stability(
+            n_extra_runs=seed_stability,
+            base_seed=seed,
+            track=stability_track,
+            target=target,
+            target_text=target_text,
+            text_anchor_weight=text_anchor_weight,
+            encoder=encoder,
+            encoder_name=encoder_name,
+            engine=engine,
+            modalities=modalities,
+            steps=steps,
+            device=device,
+            output_dir=output_dir / ".stability",
+            image_backbone=image_backbone,
+            audio_backbone=audio_backbone,
+            video_backbone=video_backbone,
+            autocast_dtype=autocast_dtype,
+            compile_mode=compile_mode,
+            sae=sae,
+            sae_feature_labels=sae_feature_labels,
+            linear_probes=linear_probes,
+        )
+        # Attach to the relevant track's manifest evaluation card.
+        canonical_manifest = per_track_manifests[stability_track]
+        canonical_manifest.setdefault("evaluation", {})["seed_stability"] = stability_report
+        canonical_manifest_path = (
+            output_dir / stability_track / "manifest.json"
+            if multi_track
+            else output_dir / "manifest.json"
+        )
+        canonical_manifest_path.write_text(json.dumps(canonical_manifest, indent=2))
+        console.print(
+            f"[bold green]Seed-stability report ({seed_stability} extra runs) "
+            f"merged into {canonical_manifest_path}[/bold green]"
         )
 
     if multi_track:
@@ -1004,6 +1079,174 @@ def _load_sae(sae_path: Path) -> Any:
     except Exception as exc:
         logger.warning("Could not load SAE from %s: %s", sae_path, exc, exc_info=True)
         return None
+
+
+def _load_probe_encoders(probe_names: list[str], *, device: str) -> dict[str, Any] | None:
+    """Resolve a list of probe-encoder names through the default registry.
+
+    Each name is looked up in ``create_default_registry()`` and loaded
+    onto ``device``. Names that can't be resolved (missing extras,
+    download failures) are logged and skipped, never raised. Returns
+    ``None`` when the input list is empty so callers can short-circuit
+    the M8 probe path.
+
+    This is the production-grade entry point for ``embed-art showcase
+    --probes siglip2-so400m,clap-general``. The bundle's evaluation
+    card surfaces every probe's cosine similarity to its own projection
+    of the target text.
+    """
+    if not probe_names:
+        return None
+
+    from embedding_art.encoders.defaults import create_default_registry
+
+    registry = create_default_registry()
+    probes: dict[str, Any] = {}
+    for name in probe_names:
+        try:
+            probes[name] = registry.load(name, device=device)
+            console.print(f"[cyan]Loaded probe '{name}' for cross-encoder evaluation.[/cyan]")
+        except Exception as exc:
+            logger.warning("Could not load probe '%s' (skipping): %s", name, exc, exc_info=True)
+            console.print(
+                f"[yellow]Probe '{name}' unavailable — skipping. "
+                "Install its extras or check the encoder registry.[/yellow]"
+            )
+    return probes or None
+
+
+def _compute_seed_stability(
+    *,
+    n_extra_runs: int,
+    base_seed: int | None,
+    track: str,
+    target: Any,
+    target_text: str,
+    text_anchor_weight: float,
+    encoder: Any,
+    encoder_name: str,
+    engine: Any,
+    modalities: list[str],
+    steps: int,
+    device: str,
+    output_dir: Path,
+    image_backbone: str,
+    audio_backbone: str,
+    video_backbone: str,
+    autocast_dtype: str,
+    compile_mode: str,
+    sae: Any = None,
+    sae_feature_labels: dict[int, str] | None = None,
+    linear_probes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Re-render the target N times with distinct seeds and report variance.
+
+    The canonical first run lives outside this helper (in the main
+    showcase loop). This helper does the *extra* runs and aggregates
+    their final per-modality cosine similarities into
+    ``{modality: {mean, std, n, values}}``. Each extra run writes its
+    artefacts into ``output_dir / seed_<n>`` so they can be inspected
+    individually, but the manifest only carries summary statistics.
+
+    Returns:
+        A dict shaped:
+
+        .. code-block:: python
+
+            {
+                "n_extra_runs": int,
+                "base_seed": int | None,
+                "per_modality": {
+                    "image": {  # SeedStabilityReport.to_dict()
+                        "n_seeds": int,
+                        "mean_similarity": float,
+                        "std_similarity": float,
+                        "min_similarity": float,
+                        "max_similarity": float,
+                        "feature_overlap_jaccard": float | None,
+                    },
+                    ...
+                },
+            }
+
+    The per-modality dict shape matches
+    :class:`~embedding_art.evaluation.stability.SeedStabilityReport.to_dict`
+    so downstream consumers (frontend, manifest readers) can treat
+    each modality block uniformly.
+    """
+    from embedding_art.evaluation.stability import compute_seed_stability
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    base = 0 if base_seed is None else int(base_seed)
+    per_modality_sims: dict[str, list[float]] = {}
+    per_modality_feature_sets: dict[str, list[set[int]]] = {}
+    for i in range(n_extra_runs):
+        run_seed = base + 1 + i
+        run_dir = output_dir / f"seed_{run_seed}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            manifest = _render_track(
+                track=track,
+                target=target,
+                target_text=target_text,
+                text_anchor_weight=text_anchor_weight,
+                encoder=encoder,
+                encoder_name=encoder_name,
+                engine=engine,
+                modalities=modalities,
+                steps=steps,
+                seed=run_seed,
+                device=device,
+                output_dir=run_dir,
+                image_backbone=image_backbone,
+                audio_backbone=audio_backbone,
+                video_backbone=video_backbone,
+                autocast_dtype=autocast_dtype,
+                compile_mode=compile_mode,
+                sae=sae,
+                sae_feature_labels=sae_feature_labels,
+                linear_probes=linear_probes,
+                interpret=sae is not None,  # SAE features needed for feature-set overlap
+                evaluate=False,
+                probe_encoders=None,
+            )
+        except Exception as exc:
+            logger.warning("Seed-stability run %d failed: %s", run_seed, exc, exc_info=True)
+            continue
+
+        for mod, data in manifest.get("modalities", {}).items():
+            if mod == "text":
+                continue
+            sim = data.get("final_similarity")
+            if sim is None or not isinstance(sim, (int, float)):
+                continue
+            per_modality_sims.setdefault(mod, []).append(float(sim))
+
+            # Optional: feature-set overlap if interpretation bundle has SAE features.
+            interp = data.get("interpretation") or {}
+            sae_block = interp.get("sae_features") or []
+            if sae_block:
+                feat_ids = {int(f["index"]) for f in sae_block if "index" in f}
+                per_modality_feature_sets.setdefault(mod, []).append(feat_ids)
+
+    per_modality: dict[str, dict[str, Any]] = {}
+    for mod, sims in per_modality_sims.items():
+        feature_sets = per_modality_feature_sets.get(mod)
+        # Only pass feature_sets when its length matches similarities.
+        if feature_sets is not None and len(feature_sets) != len(sims):
+            feature_sets = None
+        report = compute_seed_stability(
+            similarities=sims,
+            feature_sets=feature_sets,
+        )
+        per_modality[mod] = report.to_dict()
+
+    return {
+        "n_extra_runs": n_extra_runs,
+        "base_seed": base_seed,
+        "per_modality": per_modality,
+    }
 
 
 def _load_sae_labels(sae_path: Path) -> dict[int, str] | None:
