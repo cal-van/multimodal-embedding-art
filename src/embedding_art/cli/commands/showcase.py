@@ -825,10 +825,18 @@ def _run_modality_interpretation(
     final_similarity: float,
     output_dir: Path,
     modality: str,
+    embedding_history: Any = None,
+    similarity_history: Any = None,
 ) -> dict[str, Any] | None:
     """Compute the interpretation bundle for one modality and save its
     attribution map to disk. Returns the JSON-friendly dict to inline in the
-    manifest, or ``None`` if the bundle could not be computed."""
+    manifest, or ``None`` if the bundle could not be computed.
+
+    When ``embedding_history`` and ``similarity_history`` are provided, the
+    bundle additionally includes a CorrSteer ranking — Pearson correlation
+    between each SAE feature's per-step activation and the cosine-similarity
+    trajectory.
+    """
     from embedding_art.interpretation import run_interpretation
     from embedding_art.interpretation.bundle import compute_attribution_to_disk
 
@@ -840,6 +848,8 @@ def _run_modality_interpretation(
             sae=sae,
             sae_feature_labels=sae_feature_labels,
             final_similarity=float(final_similarity),
+            embedding_history=embedding_history,
+            similarity_history=similarity_history,
         )
 
         attribution_path = output_dir / f"{modality}_attribution.pt"

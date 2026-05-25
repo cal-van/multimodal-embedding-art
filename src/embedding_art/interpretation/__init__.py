@@ -37,11 +37,17 @@ from embedding_art.interpretation.bundle import (
     InterpretationBundle,
     run_interpretation,
 )
+from embedding_art.interpretation.corrsteer import (
+    compute_corrsteer,
+    pearson_correlation_matrix,
+)
 from embedding_art.interpretation.text_anchor import text_anchor_readout
 
 __all__ = [
     "InterpretationBundle",
+    "compute_corrsteer",
     "gradient_attribution",
+    "pearson_correlation_matrix",
     "run_interpretation",
     "text_anchor_readout",
 ]

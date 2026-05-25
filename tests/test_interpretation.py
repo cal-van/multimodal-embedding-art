@@ -311,6 +311,58 @@ class TestRunInterpretation:
         assert 5 in bundle.sae_decomposition
         assert 12 in bundle.sae_decomposition
 
+    def test_sae_corrsteer_populated_when_history_provided(self) -> None:
+        """When embedding+similarity history is passed, the bundle includes
+        a top-K CorrSteer ranking computed from the SAE's per-step
+        activations against the similarity trajectory."""
+        encoder = _FakeEncoder()
+        target = MagicMock()
+        target.embedding = encoder.encode_text("goldfish")
+        output = torch.rand(1, 3, 32, 32)
+
+        # SAE wraps the encoded output for the final decomposition, then
+        # is *re-called* by compute_corrsteer with the [N, D] stacked
+        # history tensor. The MagicMock returns whatever side_effect
+        # produces — match shape per call.
+        fake_sae = MagicMock()
+
+        def sae_side_effect(x: torch.Tensor) -> torch.Tensor:
+            # x is either [1, D] (final decomposition) or [N, D] (history).
+            if x.shape[0] == 1:
+                out = torch.zeros(1, 64)
+                out[0, 5] = 1.0
+                return out
+            # For the history call, produce a feature that perfectly
+            # tracks the similarity ramp (feature 5) plus a constant
+            # feature (feature 7, no signal).
+            n = x.shape[0]
+            ramp = torch.linspace(0.0, 1.0, n)
+            out = torch.zeros(n, 64)
+            out[:, 5] = ramp
+            out[:, 7] = 0.5  # constant
+            return out
+
+        fake_sae.side_effect = sae_side_effect
+
+        embedding_history = [torch.randn(768) for _ in range(20)]
+        similarity_history = [t / 20.0 for t in range(20)]
+
+        bundle = run_interpretation(
+            target=target,
+            output=output,
+            encoder=encoder,
+            sae=fake_sae,
+            embedding_history=embedding_history,
+            similarity_history=similarity_history,
+            top_k_features=4,
+        )
+        assert bundle.sae_corrsteer is not None
+        assert len(bundle.sae_corrsteer) >= 1
+        # Feature 5 should be the top correlate (perfect positive cor).
+        top_feature, top_corr = bundle.sae_corrsteer[0]
+        assert top_feature == 5
+        assert top_corr > 0.99
+
     def test_linear_probes_evaluated_when_provided(self) -> None:
         encoder = _FakeEncoder()
         target = MagicMock()

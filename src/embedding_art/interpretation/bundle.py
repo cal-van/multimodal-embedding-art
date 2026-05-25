@@ -80,6 +80,8 @@ def run_interpretation(
     top_k_text: int = 20,
     top_k_features: int = 16,
     final_similarity: float | None = None,
+    embedding_history: list[torch.Tensor] | torch.Tensor | None = None,
+    similarity_history: list[float] | torch.Tensor | None = None,
 ) -> InterpretationBundle:
     """Assemble an :class:`InterpretationBundle` for a rendered output.
 
@@ -127,6 +129,18 @@ def run_interpretation(
                 feat_idx: sae_feature_labels.get(feat_idx, f"feature_{feat_idx}")
                 for feat_idx in bundle.sae_decomposition
             }
+
+        if embedding_history is not None and similarity_history is not None:
+            from embedding_art.interpretation.corrsteer import compute_corrsteer
+
+            corrsteer = compute_corrsteer(
+                sae=sae,
+                embedding_history=embedding_history,
+                similarity_history=similarity_history,
+                top_k=top_k_features,
+            )
+            if corrsteer:
+                bundle.sae_corrsteer = corrsteer
 
     if linear_probes is not None:
         bundle.linear_probes = _run_linear_probes(current_emb=current_emb, probes=linear_probes)
