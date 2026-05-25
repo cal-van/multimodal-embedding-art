@@ -178,6 +178,15 @@ VALID_TRACKS = ("honest", "natural")
     "selected each is rendered into a subdirectory of the output.",
 )
 @click.option(
+    "--autocast-dtype",
+    type=click.Choice(["fp32", "fp16", "bf16"]),
+    default="fp32",
+    show_default=True,
+    help="Mixed-precision autocast for the forward+loss section of each "
+    "optimisation step. 'bf16' is recommended on M1 Max and ~2x faster; "
+    "'fp32' is the safe default.",
+)
+@click.option(
     "--interpret/--no-interpret",
     default=True,
     show_default=True,
@@ -212,6 +221,7 @@ def showcase(
     audio_backbone: str,
     video_backbone: str,
     tracks: str,
+    autocast_dtype: str,
     interpret: bool,
     sae_path: str | None,
     evaluate: bool,
@@ -241,6 +251,7 @@ def showcase(
             audio_backbone=audio_backbone,
             video_backbone=video_backbone,
             tracks=track_list,
+            autocast_dtype=autocast_dtype,
             interpret=interpret,
             sae_path=Path(sae_path) if sae_path else None,
             evaluate=evaluate,
@@ -263,6 +274,7 @@ def _showcase_impl(
     audio_backbone: str = "stable-audio-open",
     video_backbone: str = "ltx-video",
     tracks: list[str] | None = None,
+    autocast_dtype: str = "fp32",
     interpret: bool = True,
     sae_path: Path | None = None,
     evaluate: bool = True,
@@ -317,6 +329,7 @@ def _showcase_impl(
             image_backbone=image_backbone,
             audio_backbone=audio_backbone,
             video_backbone=video_backbone,
+            autocast_dtype=autocast_dtype,
             sae=sae,
             sae_feature_labels=sae_feature_labels,
             interpret=interpret,
@@ -369,6 +382,7 @@ def _render_track(
     image_backbone: str,
     audio_backbone: str,
     video_backbone: str,
+    autocast_dtype: str,
     sae: Any,
     sae_feature_labels: dict[int, str] | None,
     interpret: bool,
@@ -386,6 +400,7 @@ def _render_track(
         learning_rate=0.1,
         seed=seed,
         loss=_build_track_loss_config(track),
+        autocast_dtype=autocast_dtype,  # type: ignore[arg-type]
     )
 
     console.print(f"[bold magenta]Rendering track: {track}[/bold magenta]")

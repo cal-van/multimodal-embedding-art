@@ -89,6 +89,13 @@ class OptimizationConfig:
     guidance_scale: float = 0.0  # ImageBind guidance scale
     normalize_gradients: bool = False  # Whether to normalize gradients for stability
 
+    # Mixed-precision: wraps the forward+loss section of each step in
+    # ``torch.autocast(device_type=device, dtype=...)``.  Gradients are still
+    # accumulated in fp32 by torch's autocast machinery, so stability is
+    # preserved.  Defaults to ``"fp32"`` (no autocast) for safety; on M1 Max
+    # ``"bf16"`` is the recommended setting and roughly halves wall-time.
+    autocast_dtype: Literal["fp32", "fp16", "bf16"] = "fp32"
+
     # Loss function
     loss: LossConfig = field(default_factory=LossConfig)
 

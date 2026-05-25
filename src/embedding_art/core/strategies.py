@@ -149,18 +149,27 @@ class OptimizationStrategy:
 
         output: torch.Tensor | None = None
 
+        # Resolve autocast context. fp32 is a no-op so we don't pay the
+        # `torch.autocast` enter/exit cost in that case.
+        autocast_ctx, autocast_dtype = self._resolve_autocast(encoder, config.autocast_dtype)
+
         for step in range(start_step, config.steps):
             optimizer.zero_grad()
 
-            if is_direct:
-                output = generator.render()
-            else:
-                output = generator.decode(latent)  # type: ignore[arg-type]
+            with autocast_ctx:
+                if is_direct:
+                    output = generator.render()
+                else:
+                    output = generator.decode(latent)  # type: ignore[arg-type]
 
-            # Apply augmentation before loss computation.
-            augmented = self._augment(output, config.augmentation)
+                # Apply augmentation before loss computation.
+                augmented = self._augment(output, config.augmentation)
 
-            breakdown = loss_fn(augmented, target, encoder, latent)
+                breakdown = loss_fn(augmented, target, encoder, latent)
+
+            # Backward always happens outside autocast: gradients are kept
+            # in fp32 by autocast machinery, but issuing .backward() inside
+            # the context is unnecessary and slightly slower.
             breakdown.total.backward()
 
             torch.nn.utils.clip_grad_norm_(optimizable, max_norm=1.0)
@@ -314,6 +323,42 @@ class OptimizationStrategy:
     def _encoder_name(encoder: Any) -> str:
         """Extract a human-readable name from *encoder* if available."""
         return _encoder_name(encoder)
+
+    def _resolve_autocast(self, encoder: Any, dtype_name: str) -> tuple[Any, torch.dtype | None]:
+        """Build the autocast context manager for the requested dtype.
+
+        Returns a tuple of (``context_manager``, ``dtype``). When
+        ``dtype_name == "fp32"`` the context manager is a no-op
+        ``contextlib.nullcontext`` and the dtype is ``None`` — callers
+        therefore do not pay any overhead for the default case.
+
+        ``device_type`` is inferred from the encoder's ``device`` attribute
+        when available. ``cuda`` and ``mps`` both support autocast in recent
+        PyTorch (2.4+); on ``cpu`` only bf16 is meaningfully supported.
+
+        Unknown dtype strings raise ``ValueError``.
+        """
+        from contextlib import nullcontext
+
+        if dtype_name == "fp32":
+            return nullcontext(), None
+
+        dtype = {"fp16": torch.float16, "bf16": torch.bfloat16}.get(dtype_name)
+        if dtype is None:
+            raise ValueError(
+                f"Unknown autocast_dtype '{dtype_name}'. " "Expected one of 'fp32', 'fp16', 'bf16'."
+            )
+
+        device_obj = getattr(encoder, "device", None)
+        device_type = "cpu"
+        if device_obj is not None:
+            device_type = (
+                device_obj.type if isinstance(device_obj, torch.device) else str(device_obj)
+            )
+            # ``str(torch.device("cuda:0"))`` is ``"cuda:0"`` — strip the index.
+            device_type = device_type.split(":", 1)[0]
+
+        return torch.autocast(device_type=device_type, dtype=dtype), dtype
 
 
 def _encoder_name(encoder: Any) -> str:

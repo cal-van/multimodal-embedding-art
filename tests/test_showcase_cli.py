@@ -83,6 +83,13 @@ class TestShowcaseFlagDefaults:
         assert "honest" in result.output
         assert "natural" in result.output
 
+    def test_autocast_dtype_flag_documented(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(showcase, ["--help"])
+        assert "--autocast-dtype" in result.output
+        assert "bf16" in result.output
+        assert "fp16" in result.output
+
     def test_invalid_track_rejected(self) -> None:
         runner = CliRunner()
         result = runner.invoke(showcase, ["-t", "x", "-o", "/tmp/out", "--tracks", "bogus"])
