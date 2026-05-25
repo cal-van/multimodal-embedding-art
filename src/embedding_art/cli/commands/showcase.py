@@ -241,6 +241,18 @@ VALID_TRACKS = ("honest", "natural")
     "(see `embed-art train-probes`). When provided, each modality's "
     "interpretation bundle includes per-probe activations.",
 )
+@click.option(
+    "--text-anchor-weight",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Auxiliary loss weight for the M4 text-anchor signal. When > 0 the "
+    "composite loss adds a cosine term pulling the optimisation embedding "
+    "toward the encoder's text projection of the concept label. See the "
+    "empirical sweep at docs/superpowers/results/text-anchor-sweep/ for "
+    "recommended values; 0.25 is a conservative starting point for "
+    "image/audio/video tracks.",
+)
 @click.pass_context
 def showcase(
     ctx: click.Context,
@@ -261,6 +273,7 @@ def showcase(
     sae_path: str | None,
     evaluate: bool,
     linear_probes_dir: str | None,
+    text_anchor_weight: float,
 ) -> None:
     """Render one concept across all four modalities into a single showcase bundle."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
@@ -293,6 +306,7 @@ def showcase(
             sae_path=Path(sae_path) if sae_path else None,
             evaluate=evaluate,
             linear_probes_dir=Path(linear_probes_dir) if linear_probes_dir else None,
+            text_anchor_weight=text_anchor_weight,
         )
     except Exception as e:
         handle_exception(e, debug_mode)
@@ -319,6 +333,7 @@ def _showcase_impl(
     evaluate: bool = True,
     probe_encoders: dict[str, Any] | None = None,
     linear_probes_dir: Path | None = None,
+    text_anchor_weight: float = 0.0,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     """Orchestrate the per-modality renderings and assemble the bundle.
@@ -374,6 +389,7 @@ def _showcase_impl(
             track=track,
             target=target,
             target_text=target_text,
+            text_anchor_weight=text_anchor_weight,
             encoder=encoder,
             encoder_name=encoder_name,
             engine=engine,
@@ -439,6 +455,7 @@ def _render_track(
     track: str,
     target: Any,
     target_text: str,
+    text_anchor_weight: float = 0.0,
     encoder: Any,
     encoder_name: str,
     engine: Any,
@@ -471,7 +488,7 @@ def _render_track(
         steps=steps,
         learning_rate=0.1,
         seed=seed,
-        loss=_build_track_loss_config(track),
+        loss=_build_track_loss_config(track, text_anchor_weight=text_anchor_weight),
         autocast_dtype=autocast_dtype,  # type: ignore[arg-type]
         compile_mode=compile_mode,  # type: ignore[arg-type]
     )
@@ -595,7 +612,7 @@ def _render_track(
     return manifest
 
 
-def _build_track_loss_config(track: str) -> Any:
+def _build_track_loss_config(track: str, *, text_anchor_weight: float = 0.0) -> Any:
     """Return the LossConfig for the requested track.
 
     * **honest** — high similarity, high feature-matching, minimal
@@ -606,6 +623,11 @@ def _build_track_loss_config(track: str) -> Any:
       track; the regulariser balance is calibrated to produce visibly more
       conventionally-natural outputs without abandoning the target. When
       M2b lands the VSD prior plugs in here without changing the surface.
+
+    ``text_anchor_weight`` is forwarded to both tracks. The auxiliary
+    M4 loss is encoder-agnostic and the recommended default (0.0) is
+    a no-op; pass a positive value via ``embed-art showcase
+    --text-anchor-weight 0.25`` to enable.
     """
     from embedding_art.core.config import LossConfig
     from embedding_art.regularizers.base import CompositeRegularizer
@@ -614,12 +636,14 @@ def _build_track_loss_config(track: str) -> Any:
         return LossConfig(
             similarity_weight=1.0,
             feature_matching_weight=0.5,
+            text_anchor_weight=text_anchor_weight,
             regularization=CompositeRegularizer.minimal(),
         )
     if track == "natural":
         return LossConfig(
             similarity_weight=0.4,
             feature_matching_weight=0.15,
+            text_anchor_weight=text_anchor_weight,
             regularization=CompositeRegularizer.heavy(),
         )
     raise ValueError(f"Unknown track '{track}'. Valid tracks: {VALID_TRACKS}")

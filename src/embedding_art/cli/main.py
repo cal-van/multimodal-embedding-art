@@ -22,6 +22,7 @@ from embedding_art.cli.commands.profile import profile
 from embedding_art.cli.commands.render import render
 from embedding_art.cli.commands.sae import sae
 from embedding_art.cli.commands.showcase import showcase
+from embedding_art.cli.commands.text_anchor_sweep import text_anchor_sweep
 from embedding_art.cli.commands.train_probes import train_probes
 from embedding_art.cli.commands.upscale import upscale
 from embedding_art.cli.commands.visualize import visualize
@@ -77,6 +78,7 @@ cli.add_command(interpolate_v2)
 cli.add_command(showcase)
 cli.add_command(anchor_compare)
 cli.add_command(profile)
+cli.add_command(text_anchor_sweep)
 cli.add_command(train_probes)
 
 
