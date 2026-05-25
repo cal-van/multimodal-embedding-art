@@ -215,6 +215,56 @@ class TestShowcaseOrchestrationTextOnly:
         assert "goldfish" in card
         assert "languagebind" in card
 
+    def test_progress_callback_receives_structured_events(self, tmp_path: Path) -> None:
+        """``progress_callback`` is invoked with structured events.
+
+        The text-only modality is sufficient to verify that
+        ``showcase_start`` / ``track_start`` / ``modality_start`` /
+        ``modality_complete`` / ``track_complete`` are emitted in order.
+        """
+        from embedding_art.cli.commands.showcase import _showcase_impl
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        events: list[dict] = []
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry",
+            return_value=mock_registry,
+        ):
+            with patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry"
+            ) as mock_engine_factory:
+                mock_engine_factory.return_value = MagicMock()
+                _showcase_impl(
+                    target_text="thunder",
+                    output_dir=tmp_path,
+                    encoder_name="languagebind",
+                    modalities=["text"],
+                    steps=5,
+                    seed=1,
+                    device="cpu",
+                    image_backbone="sd35",
+                    progress_callback=events.append,
+                )
+
+        kinds = [e.get("type") for e in events]
+        assert kinds[0] == "showcase_start"
+        assert "track_start" in kinds
+        assert "modality_start" in kinds
+        assert "modality_complete" in kinds
+        assert kinds[-1] == "track_complete"
+
+        modality_start = next(e for e in events if e["type"] == "modality_start")
+        assert modality_start["modality"] == "text"
+        assert modality_start["track"] == "honest"
+
+        modality_complete = next(e for e in events if e["type"] == "modality_complete")
+        assert modality_complete["modality"] == "text"
+
 
 class TestShowcaseInterpretationManifest:
     """When --interpret is on, the manifest gains an interpretation block."""

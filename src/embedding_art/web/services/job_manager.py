@@ -430,6 +430,49 @@ def _run_showcase_job(job: Job, broadcast: Callable[[dict], None]) -> None:
         job.logs.append(f"Rendering showcase for '{target}' to {outputs_dir}")
         broadcast({"type": "log", "message": f"Rendering showcase for '{target}'"})
 
+        def _showcase_progress(event: dict) -> None:
+            """Forward structured showcase events to the websocket broadcaster.
+
+            The CLI _showcase_impl emits a handful of event types:
+            ``showcase_start`` / ``track_start`` / ``modality_start`` /
+            ``modality_complete`` / ``track_complete``. Each becomes both a
+            human-readable log line (so the Logs panel stays useful) and a
+            structured ``showcase_event`` message (so the UI can render
+            live text-anchor readouts, current modality, etc.).
+            """
+            kind = event.get("type", "")
+            if kind == "showcase_start":
+                msg = (
+                    f"Showcase start: target='{event.get('target_text')}' "
+                    f"modalities={event.get('modalities')} "
+                    f"tracks={event.get('tracks')}"
+                )
+            elif kind == "track_start":
+                msg = f"Track start: {event.get('track')}"
+            elif kind == "modality_start":
+                msg = (
+                    f"Rendering modality '{event.get('modality')}' " f"(track={event.get('track')})"
+                )
+            elif kind == "modality_complete":
+                sim = event.get("similarity")
+                sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "?"
+                msg = (
+                    f"Completed '{event.get('modality')}' "
+                    f"(track={event.get('track')}, sim={sim_str})"
+                )
+                anchor = event.get("text_anchor")
+                if isinstance(anchor, list) and anchor:
+                    words = [a.get("word", "?") for a in anchor[:5] if isinstance(a, dict)]
+                    if words:
+                        msg += f" anchor=[{', '.join(words)}]"
+            elif kind == "track_complete":
+                msg = f"Track complete: {event.get('track')}"
+            else:
+                msg = f"event: {kind}"
+            job.logs.append(msg)
+            broadcast({"type": "log", "message": msg})
+            broadcast({"type": "showcase_event", "event": event})
+
         _showcase_impl(
             target_text=target,
             output_dir=Path(outputs_dir),
@@ -446,6 +489,7 @@ def _run_showcase_job(job: Job, broadcast: Callable[[dict], None]) -> None:
             interpret=job.interpret,
             sae_path=Path(job.sae_path) if job.sae_path else None,
             evaluate=job.evaluate,
+            progress_callback=_showcase_progress,
         )
 
         manifest_url = f"/outputs/showcase/{job.id}/manifest.json"

@@ -4,9 +4,19 @@ import { api } from '../services/api';
 import type { Job } from '../services/api';
 import { ShowcaseManifestView } from '../components/ShowcaseManifestView';
 
+interface ShowcaseEvent {
+    type: string;
+    track?: string;
+    modality?: string;
+    similarity?: number;
+    text_anchor?: Array<{ word: string; similarity?: number }> | null;
+    [key: string]: unknown;
+}
+
 export function JobPage() {
     const { id } = useParams<{ id: string }>();
     const [job, setJob] = useState<Job | null>(null);
+    const [events, setEvents] = useState<ShowcaseEvent[]>([]);
     const [error, setError] = useState<string | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
     const logsRef = useRef<HTMLDivElement>(null);
@@ -98,6 +108,12 @@ export function JobPage() {
                         if (msg.type === 'error') {
                             return { ...prev, error: msg.message, status: 'failed' };
                         }
+                        if (msg.type === 'showcase_event') {
+                            // Stored in a sibling state slot, not on the job
+                            // itself, so it doesn't shadow per-modality results.
+                            setEvents((prev) => [...prev, msg.event as ShowcaseEvent]);
+                            return prev;
+                        }
                         return prev;
                     });
                 } catch (e) {
@@ -183,7 +199,8 @@ export function JobPage() {
 
             {isShowcase ? (
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-                    <div>
+                    <div className="flex flex-col gap-4">
+                        <ShowcaseEventStream events={events} />
                         {job.manifest_url ? (
                             <ShowcaseManifestView manifestUrl={job.manifest_url} />
                         ) : (
@@ -244,6 +261,63 @@ export function JobPage() {
                             </div>
                         )}
                     </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+function ShowcaseEventStream({ events }: { events: ShowcaseEvent[] }) {
+    if (events.length === 0) {
+        return (
+            <div className="card text-sm text-dim">
+                Waiting for showcase events…
+            </div>
+        );
+    }
+
+    // Build a compact view: latest modality activity, plus the most recent
+    // text-anchor readout from any modality_complete event.
+    const last = events[events.length - 1];
+    const lastComplete = [...events].reverse().find((e) => e.type === 'modality_complete');
+
+    return (
+        <div className="card flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold uppercase tracking-wide">Live Stream</h3>
+                <span className="text-xs text-dim font-mono">
+                    {last.type}
+                    {last.modality ? ` · ${last.modality}` : ''}
+                    {last.track ? ` · ${last.track}` : ''}
+                </span>
+            </div>
+            {lastComplete && (
+                <div className="text-xs text-dim flex flex-col gap-1">
+                    <div>
+                        Last complete:{' '}
+                        <span className="font-mono">
+                            {lastComplete.modality} · sim=
+                            {typeof lastComplete.similarity === 'number'
+                                ? lastComplete.similarity.toFixed(3)
+                                : '?'}
+                        </span>
+                    </div>
+                    {Array.isArray(lastComplete.text_anchor) && lastComplete.text_anchor.length > 0 && (
+                        <div>
+                            text-anchor:{' '}
+                            <span className="font-mono">
+                                {lastComplete.text_anchor
+                                    .slice(0, 8)
+                                    .map((t) =>
+                                        typeof t.similarity === 'number'
+                                            ? `${t.word} (${t.similarity.toFixed(2)})`
+                                            : t.word,
+                                    )
+                                    .join(', ')}
+                            </span>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

@@ -78,12 +78,28 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import click
 
 from embedding_art.cli.utils import console, handle_exception
+
+
+def _emit(callback: Callable[[dict[str, Any]], None] | None, event: dict[str, Any]) -> None:
+    """Invoke ``callback`` with ``event`` if a callback is provided.
+
+    Errors in the callback are swallowed so that broadcasting issues
+    (e.g. a closed websocket) never break the rendering loop.
+    """
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception:  # pragma: no cover - defensive
+        logging.getLogger(__name__).exception("progress_callback raised; ignoring")
+
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +294,7 @@ def _showcase_impl(
     interpret: bool = True,
     sae_path: Path | None = None,
     evaluate: bool = True,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     """Orchestrate the per-modality renderings and assemble the bundle.
 
@@ -311,9 +328,22 @@ def _showcase_impl(
     multi_track = len(tracks) > 1
     per_track_manifests: dict[str, dict[str, Any]] = {}
 
+    _emit(
+        progress_callback,
+        {
+            "type": "showcase_start",
+            "target_text": target_text,
+            "encoder": encoder_name,
+            "modalities": modalities,
+            "tracks": tracks,
+            "multi_track": multi_track,
+        },
+    )
+
     for track in tracks:
         track_output_dir = (output_dir / track) if multi_track else output_dir
         track_output_dir.mkdir(parents=True, exist_ok=True)
+        _emit(progress_callback, {"type": "track_start", "track": track})
         per_track_manifests[track] = _render_track(
             track=track,
             target=target,
@@ -334,6 +364,15 @@ def _showcase_impl(
             sae_feature_labels=sae_feature_labels,
             interpret=interpret,
             evaluate=evaluate,
+            progress_callback=progress_callback,
+        )
+        _emit(
+            progress_callback,
+            {
+                "type": "track_complete",
+                "track": track,
+                "summary": _summarise_track(per_track_manifests[track]),
+            },
         )
 
     if multi_track:
@@ -387,6 +426,7 @@ def _render_track(
     sae_feature_labels: dict[int, str] | None,
     interpret: bool,
     evaluate: bool,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Render a single track (honest or natural) into ``output_dir``.
 
@@ -422,7 +462,20 @@ def _render_track(
         "modalities": {},
     }
 
+    def _emit_modality_complete(modality: str, record: dict[str, Any]) -> None:
+        _emit(
+            progress_callback,
+            {
+                "type": "modality_complete",
+                "track": track,
+                "modality": modality,
+                "similarity": record.get("final_similarity"),
+                "text_anchor": (record.get("interpretation") or {}).get("text_anchor"),
+            },
+        )
+
     if "image" in modalities:
+        _emit(progress_callback, {"type": "modality_start", "track": track, "modality": "image"})
         manifest["modalities"]["image"] = _render_image(
             engine=engine,
             target=target,
@@ -436,8 +489,10 @@ def _render_track(
             sae=sae,
             sae_feature_labels=sae_feature_labels,
         )
+        _emit_modality_complete("image", manifest["modalities"]["image"])
 
     if "audio" in modalities:
+        _emit(progress_callback, {"type": "modality_start", "track": track, "modality": "audio"})
         manifest["modalities"]["audio"] = _render_audio(
             engine=engine,
             target=target,
@@ -451,8 +506,10 @@ def _render_track(
             sae=sae,
             sae_feature_labels=sae_feature_labels,
         )
+        _emit_modality_complete("audio", manifest["modalities"]["audio"])
 
     if "video" in modalities:
+        _emit(progress_callback, {"type": "modality_start", "track": track, "modality": "video"})
         manifest["modalities"]["video"] = _render_video(
             engine=engine,
             target=target,
@@ -466,14 +523,17 @@ def _render_track(
             sae=sae,
             sae_feature_labels=sae_feature_labels,
         )
+        _emit_modality_complete("video", manifest["modalities"]["video"])
 
     if "text" in modalities:
+        _emit(progress_callback, {"type": "modality_start", "track": track, "modality": "text"})
         manifest["modalities"]["text"] = _render_text_card(
             target=target,
             target_text=target_text,
             output_dir=output_dir,
             manifest=manifest,
         )
+        _emit_modality_complete("text", manifest["modalities"]["text"])
 
     if evaluate:
         manifest["evaluation"] = _compute_evaluation_card(
