@@ -14,7 +14,14 @@ Embedding Art generates images (audio/video planned) by optimizing generative mo
 # Install with dev dependencies
 pip install -e ".[dev]"
 
-# ImageBind must be installed separately (required encoder)
+# LanguageBind is the canonical multimodal encoder (v3 aggressive-rewrite).
+# Distributed as a research codebase without setup.py — clone and add to path.
+git clone https://github.com/PKU-YuanGroup/LanguageBind ../LanguageBind
+# Then either:
+#   (a) add ../LanguageBind to PYTHONPATH, or
+#   (b) create a minimal setup.py inside ../LanguageBind and run pip install -e .
+
+# ImageBind is the v1/v2 encoder, deprecated in v3 but kept for back-compat
 git clone https://github.com/facebookresearch/ImageBind
 cd ImageBind && pip install -e . && cd ..
 

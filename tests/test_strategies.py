@@ -762,3 +762,66 @@ class TestDiffusionGuidanceStrategyReturnValue:
 
         assert isinstance(result.history, OptimizationHistory)
         assert len(result.history) == 0
+
+
+# ---------------------------------------------------------------------------
+# Autocast wiring
+# ---------------------------------------------------------------------------
+
+
+class TestAutocastWiring:
+    """``OptimizationStrategy`` resolves ``autocast_dtype`` correctly and
+    only wraps the forward+loss section in ``torch.autocast`` when
+    non-fp32."""
+
+    def test_fp32_resolves_to_nullcontext(self):
+        from contextlib import nullcontext
+
+        from embedding_art.core.strategies import OptimizationStrategy
+
+        strategy = OptimizationStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        ctx, dtype = strategy._resolve_autocast(encoder, "fp32")
+        assert dtype is None
+        assert isinstance(ctx, type(nullcontext()))
+
+    def test_bf16_resolves_to_torch_autocast_context(self):
+        from embedding_art.core.strategies import OptimizationStrategy
+
+        strategy = OptimizationStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        ctx, dtype = strategy._resolve_autocast(encoder, "bf16")
+        assert dtype == torch.bfloat16
+        # torch.autocast is exposed as torch.amp.autocast_mode.autocast
+        assert isinstance(ctx, torch.amp.autocast_mode.autocast)
+
+    def test_fp16_resolves_to_torch_autocast_context(self):
+        from embedding_art.core.strategies import OptimizationStrategy
+
+        strategy = OptimizationStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        ctx, dtype = strategy._resolve_autocast(encoder, "fp16")
+        assert dtype == torch.float16
+        assert isinstance(ctx, torch.amp.autocast_mode.autocast)
+
+    def test_unknown_dtype_raises(self):
+        from embedding_art.core.strategies import OptimizationStrategy
+
+        strategy = OptimizationStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        with pytest.raises(ValueError, match="Unknown autocast_dtype"):
+            strategy._resolve_autocast(encoder, "fp8")
+
+    def test_strategy_runs_under_bf16_on_cpu(self):
+        """End-to-end smoke test: full loop runs under bf16 autocast."""
+        from embedding_art.core.strategies import OptimizationStrategy
+
+        strategy = OptimizationStrategy()
+        encoder = DifferentiableEncoder(embedding_dim=16)
+        generator = SmallMockGenerator(latent_shape=(1, 4, 4, 4), output_channels=4, output_size=8)
+        target = _make_target_concept(embedding_dim=16)
+        config = _fast_config(autocast_dtype="bf16")
+
+        result = strategy.render(target, generator, encoder, config)
+        assert isinstance(result, RenderResult)
+        assert result.output.dtype == torch.float32  # final output is detached and clean

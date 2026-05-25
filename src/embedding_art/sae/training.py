@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
@@ -45,6 +45,159 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
+
+
+_AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
+
+
+def collect_multimodal_embeddings(
+    encoder: Encoder,
+    dataset_path: Path | str,
+    output_dir: Path | str,
+    modalities: list[str] | None = None,
+    max_samples_per_modality: int | None = None,
+) -> dict[str, Path]:
+    """Collect per-modality embedding files from a mixed-content directory.
+
+    Scans ``dataset_path`` recursively. Files are grouped by extension:
+
+    * Image extensions → ``image_embeddings.pt``
+    * Audio extensions → ``audio_embeddings.pt``
+    * Video extensions → ``video_embeddings.pt``
+    * A file named ``texts.txt`` (one prompt per line) → ``text_embeddings.pt``
+
+    Each output file matches the shape produced by :func:`collect_embeddings`
+    (``{"embeddings": float32 [N, D]}``) so it can be fed directly into
+    ``embed-art sae train-stack``.
+
+    Args:
+        encoder: The canonical multimodal encoder (must expose the
+            relevant ``encode_<modality>`` method for every modality
+            requested).
+        dataset_path: Root directory to scan.
+        output_dir: Directory in which to write the per-modality
+            ``*_embeddings.pt`` files. Created if missing.
+        modalities: Optional list to restrict the scan. Defaults to
+            ``["image", "audio", "video", "text"]``.
+        max_samples_per_modality: Optional cap; applied independently
+            to each modality after sorting.
+
+    Returns:
+        Dict mapping modality name → the saved ``.pt`` path. Modalities
+        that found no files (or whose encoder method raised on every
+        file) are absent.
+    """
+    dataset_path = Path(dataset_path)
+    output_dir = Path(output_dir)
+
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
+
+    requested = set(modalities or ["image", "audio", "video", "text"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    ext_to_modality = {ext: "image" for ext in _IMAGE_EXTENSIONS}
+    ext_to_modality.update({ext: "audio" for ext in _AUDIO_EXTENSIONS})
+    ext_to_modality.update({ext: "video" for ext in _VIDEO_EXTENSIONS})
+
+    grouped: dict[str, list[Path]] = {"image": [], "audio": [], "video": []}
+    for path in sorted(dataset_path.rglob("*")):
+        if not path.is_file():
+            continue
+        modality = ext_to_modality.get(path.suffix.lower())
+        if modality is None:
+            continue
+        if modality in requested:
+            grouped[modality].append(path)
+
+    if max_samples_per_modality is not None:
+        for k in grouped:
+            grouped[k] = grouped[k][:max_samples_per_modality]
+
+    encode_methods = {
+        "image": "encode_image",
+        "audio": "encode_audio",
+        "video": "encode_video",
+    }
+    saved: dict[str, Path] = {}
+    for modality, paths in grouped.items():
+        if not paths:
+            continue
+        method_name = encode_methods[modality]
+        if not hasattr(encoder, method_name):
+            logger.warning("Encoder has no %s — skipping %s modality.", method_name, modality)
+            continue
+        encode_fn = getattr(encoder, method_name)
+        path = _encode_paths_to_pt(
+            paths=paths,
+            encode_fn=encode_fn,
+            output_path=output_dir / f"{modality}_embeddings.pt",
+            modality=modality,
+        )
+        if path is not None:
+            saved[modality] = path
+
+    if "text" in requested:
+        texts_file = dataset_path / "texts.txt"
+        if texts_file.exists() and hasattr(encoder, "encode_text"):
+            texts = [line.strip() for line in texts_file.read_text().splitlines() if line.strip()]
+            if max_samples_per_modality is not None:
+                texts = texts[:max_samples_per_modality]
+            if texts:
+                path = _encode_paths_to_pt(
+                    paths=texts,
+                    encode_fn=encoder.encode_text,
+                    output_path=output_dir / "text_embeddings.pt",
+                    modality="text",
+                )
+                if path is not None:
+                    saved["text"] = path
+
+    return saved
+
+
+def _encode_paths_to_pt(
+    *,
+    paths: list[Any],
+    encode_fn: Any,
+    output_path: Path,
+    modality: str,
+) -> Path | None:
+    """Encode each item via ``encode_fn`` and save the resulting tensor.
+
+    Saves a dict with ``"embeddings"`` and ``"sources"`` keys. Sources
+    are stringified inputs (paths or texts), aligned 1:1 with rows of
+    ``embeddings``. This enables the activating-examples VLM labelling
+    path downstream (see ``ActivatingExamplesLabeller``). Items whose
+    encoding failed are skipped from both lists.
+
+    Returns ``None`` if every encode call failed and there was nothing
+    to save.
+    """
+    all_embeddings: list[torch.Tensor] = []
+    kept_sources: list[str] = []
+    for i, item in enumerate(paths):
+        try:
+            emb = encode_fn(item)
+        except Exception:
+            logger.warning("%s encoding failed for %s — skipping.", modality, item, exc_info=True)
+            continue
+        all_embeddings.append(emb.detach().cpu().float())
+        kept_sources.append(str(item))
+        if (i + 1) % 32 == 0:
+            logger.info("  %s: %d / %d done", modality, i + 1, len(paths))
+
+    if not all_embeddings:
+        logger.warning("No %s embeddings collected; nothing to save.", modality)
+        return None
+
+    embeddings = torch.cat(all_embeddings, dim=0)
+    embeddings = F.normalize(embeddings, dim=-1)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"embeddings": embeddings, "sources": kept_sources}, output_path)
+    logger.info("Saved %d %s embeddings to %s", embeddings.shape[0], modality, output_path)
+    return output_path.resolve()
 
 
 def collect_embeddings(
@@ -107,6 +260,7 @@ def collect_embeddings(
     logger.info("Encoding %d images from %s …", len(image_paths), dataset_path)
 
     all_embeddings: list[torch.Tensor] = []
+    kept_sources: list[str] = []
 
     for i, img_path in enumerate(image_paths):
         try:
@@ -116,6 +270,7 @@ def collect_embeddings(
             continue
 
         all_embeddings.append(emb.detach().cpu().float())
+        kept_sources.append(str(img_path))
 
         if (i + 1) % batch_size == 0:
             logger.info("  … %d / %d done", i + 1, len(image_paths))
@@ -127,7 +282,7 @@ def collect_embeddings(
     embeddings = F.normalize(embeddings, dim=-1)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"embeddings": embeddings}, output_path)
+    torch.save({"embeddings": embeddings, "sources": kept_sources}, output_path)
 
     logger.info("Saved %d embeddings to %s", embeddings.shape[0], output_path)
     return output_path.resolve()
@@ -469,6 +624,168 @@ def train_sae(
 
 
 # ---------------------------------------------------------------------------
+# Stage 3b: Matryoshka SAE training pipeline
+# ---------------------------------------------------------------------------
+
+
+def train_matryoshka_sae_pipeline(
+    embeddings_path: Path | str,
+    output_path: Path | str,
+    embed_dim: int,
+    *,
+    nested_sizes: tuple[int, ...] | list[int] = (1024, 4096, 16384),
+    k: int = 32,
+    batch_size: int = 128,
+    n_iterations: int = 25000,
+    lr: float = 1e-3,
+    log_every: int = 1000,
+) -> Any:
+    """
+    Train a :class:`MatryoshkaSAE` on a pre-collected embeddings file.
+
+    The Matryoshka SAE produces nested-prefix sparse activations:
+    ``[0:n_1] ⊂ [0:n_2] ⊂ ... ⊂ [0:n_K]`` are all valid sub-decompositions
+    on the same checkpoint. This Pareto-dominates a plain SAE at any
+    fixed width <= ``nested_sizes[-1]`` and lets inference pick a width
+    on the fly.
+
+    Parameters
+    ----------
+    embeddings_path:
+        Path to the ``.pt`` file from :func:`collect_embeddings`. Must
+        contain an ``"embeddings"`` key with a ``[N, embed_dim]`` tensor.
+    output_path:
+        Directory where the trained SAE is saved. Produces:
+        * ``sae_weights.pt`` — full state dict (W_enc, W_dec, bias).
+        * ``sae_meta.json`` — ``{"kind": "matryoshka", "nested_sizes":
+          [...], "k": ..., "embed_dim": ...}``. Consumers detect the
+          Matryoshka kind via this file and reconstruct the right class
+          when loading.
+    embed_dim:
+        Dimensionality of the input embeddings.
+    nested_sizes:
+        Strictly-increasing list of nest widths. The largest entry is
+        the full feature count. Every entry must be >= ``k``.
+    k:
+        TopK sparsity applied within each nest.
+    batch_size, n_iterations, lr:
+        Standard hyperparameters; defaults mirror :func:`train_sae`.
+    log_every:
+        Iterations between progress log lines.
+
+    Returns
+    -------
+    MatryoshkaSAE
+        The trained module (also saved to ``output_path``).
+    """
+    import json  # local: keep top of file free of stdlib churn
+
+    from embedding_art.sae.matryoshka import MatryoshkaSAE  # local: avoid cycle
+
+    embeddings_path = Path(embeddings_path)
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    data = torch.load(embeddings_path, weights_only=True)
+    embeddings: torch.Tensor = data["embeddings"].float()
+
+    if embeddings.shape[1] != embed_dim:
+        raise ValueError(
+            f"embed_dim mismatch: file has {embeddings.shape[1]}-d embeddings, "
+            f"but embed_dim={embed_dim} was specified."
+        )
+
+    nested = tuple(int(n) for n in nested_sizes)
+    logger.info(
+        "Training Matryoshka SAE: %d samples, embed_dim=%d, nested_sizes=%s, k=%d",
+        embeddings.shape[0],
+        embed_dim,
+        nested,
+        k,
+    )
+
+    sae = MatryoshkaSAE(embed_dim=embed_dim, nested_sizes=nested, k=k)
+    optimizer = torch.optim.Adam(sae.parameters(), lr=lr)
+    sae.train()
+
+    n_samples = embeddings.shape[0]
+    for iteration in range(n_iterations):
+        indices = torch.randint(0, n_samples, (min(batch_size, n_samples),))
+        batch = embeddings[indices]
+
+        loss = sae.matryoshka_loss(batch)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        sae.normalize_decoder()
+
+        if (iteration + 1) % log_every == 0:
+            logger.info("iter %d/%d  loss=%.4f", iteration + 1, n_iterations, float(loss.item()))
+
+    sae.eval()
+
+    weights_path = output_path / "sae_weights.pt"
+    torch.save(sae.state_dict(), weights_path)
+    logger.info("Saved Matryoshka SAE weights to %s", weights_path)
+
+    meta_path = output_path / "sae_meta.json"
+    meta = {
+        "kind": "matryoshka",
+        "embed_dim": embed_dim,
+        "n_features": sae.n_features,
+        "nested_sizes": list(nested),
+        "k": k,
+    }
+    meta_path.write_text(json.dumps(meta, indent=2))
+    logger.info("Saved Matryoshka SAE meta to %s", meta_path)
+
+    return sae
+
+
+def load_sae_from_dir(output_path: Path | str) -> Any:
+    """Load a trained SAE checkpoint, detecting the kind from sae_meta.json.
+
+    Returns a :class:`MatryoshkaSAE` when ``sae_meta.json`` reports
+    ``kind == "matryoshka"``; otherwise a :class:`GroupSparseSAE`.
+    """
+    import json
+
+    output_path = Path(output_path)
+    meta_path = output_path / "sae_meta.json"
+    weights_path = output_path / "sae_weights.pt"
+    if not weights_path.exists():
+        raise FileNotFoundError(f"SAE weights file not found: {weights_path}")
+
+    state = torch.load(weights_path, weights_only=True, map_location="cpu")
+
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+        if meta.get("kind") == "matryoshka":
+            from embedding_art.sae.matryoshka import MatryoshkaSAE
+
+            sae = MatryoshkaSAE(
+                embed_dim=int(meta["embed_dim"]),
+                nested_sizes=list(meta["nested_sizes"]),
+                k=int(meta["k"]),
+            )
+            sae.load_state_dict(state)
+            sae.eval()
+            return sae
+
+    # GroupSparseSAE fallback: infer embed_dim + n_features from W_enc.
+    # k is a runtime knob, not part of the checkpoint; pick a placeholder
+    # consistent with the v3 defaults so callers that don't override it
+    # still get a usable SAE.
+    W_enc = state["W_enc"]  # noqa: N806 — matches the file-wide W_enc naming convention
+    n_features, embed_dim = W_enc.shape
+    sae = GroupSparseSAE(embed_dim=embed_dim, n_features=n_features, k=32)
+    sae.load_state_dict(state)
+    sae.eval()
+    return sae
+
+
+# ---------------------------------------------------------------------------
 # Stage 4: Label features
 # ---------------------------------------------------------------------------
 
@@ -575,39 +892,181 @@ def label_features(
 # of vocabulary used in CLIP/DINO probing studies.
 _VOCAB_BASE: list[str] = [
     # colours
-    "red", "orange", "yellow", "green", "blue", "purple", "pink", "brown",
-    "black", "white", "grey", "cyan", "magenta", "crimson", "turquoise",
+    "red",
+    "orange",
+    "yellow",
+    "green",
+    "blue",
+    "purple",
+    "pink",
+    "brown",
+    "black",
+    "white",
+    "grey",
+    "cyan",
+    "magenta",
+    "crimson",
+    "turquoise",
     # animals
-    "dog", "cat", "bird", "fish", "horse", "lion", "tiger", "elephant",
-    "bear", "wolf", "fox", "rabbit", "deer", "eagle", "owl", "shark",
-    "whale", "dolphin", "monkey", "gorilla", "zebra", "giraffe", "penguin",
-    "frog", "snake", "turtle", "bee", "butterfly", "spider", "ant",
+    "dog",
+    "cat",
+    "bird",
+    "fish",
+    "horse",
+    "lion",
+    "tiger",
+    "elephant",
+    "bear",
+    "wolf",
+    "fox",
+    "rabbit",
+    "deer",
+    "eagle",
+    "owl",
+    "shark",
+    "whale",
+    "dolphin",
+    "monkey",
+    "gorilla",
+    "zebra",
+    "giraffe",
+    "penguin",
+    "frog",
+    "snake",
+    "turtle",
+    "bee",
+    "butterfly",
+    "spider",
+    "ant",
     # nature / landscape
-    "ocean", "river", "lake", "mountain", "forest", "desert", "valley",
-    "beach", "sunset", "sunrise", "storm", "snow", "rain", "fog", "fire",
-    "cloud", "sky", "tree", "flower", "grass", "rock", "sand", "leaf",
-    "wave", "waterfall", "cave", "island", "volcano",
+    "ocean",
+    "river",
+    "lake",
+    "mountain",
+    "forest",
+    "desert",
+    "valley",
+    "beach",
+    "sunset",
+    "sunrise",
+    "storm",
+    "snow",
+    "rain",
+    "fog",
+    "fire",
+    "cloud",
+    "sky",
+    "tree",
+    "flower",
+    "grass",
+    "rock",
+    "sand",
+    "leaf",
+    "wave",
+    "waterfall",
+    "cave",
+    "island",
+    "volcano",
     # textures / materials
-    "wood", "metal", "glass", "stone", "fabric", "leather", "plastic",
-    "silk", "velvet", "marble", "concrete", "rust", "crystal", "foam",
+    "wood",
+    "metal",
+    "glass",
+    "stone",
+    "fabric",
+    "leather",
+    "plastic",
+    "silk",
+    "velvet",
+    "marble",
+    "concrete",
+    "rust",
+    "crystal",
+    "foam",
     # emotions / moods
-    "joy", "sadness", "anger", "fear", "surprise", "disgust", "love",
-    "hope", "peace", "energy", "calm", "chaos", "mystery", "nostalgia",
+    "joy",
+    "sadness",
+    "anger",
+    "fear",
+    "surprise",
+    "disgust",
+    "love",
+    "hope",
+    "peace",
+    "energy",
+    "calm",
+    "chaos",
+    "mystery",
+    "nostalgia",
     # food
-    "apple", "banana", "strawberry", "orange", "lemon", "grape", "bread",
-    "cheese", "coffee", "tea", "chocolate", "cake", "pizza",
+    "apple",
+    "banana",
+    "strawberry",
+    "orange",
+    "lemon",
+    "grape",
+    "bread",
+    "cheese",
+    "coffee",
+    "tea",
+    "chocolate",
+    "cake",
+    "pizza",
     # objects
-    "book", "chair", "table", "door", "window", "clock", "lamp", "mirror",
-    "phone", "camera", "music", "art", "painting", "sculpture",
+    "book",
+    "chair",
+    "table",
+    "door",
+    "window",
+    "clock",
+    "lamp",
+    "mirror",
+    "phone",
+    "camera",
+    "music",
+    "art",
+    "painting",
+    "sculpture",
     # places
-    "city", "village", "market", "garden", "park", "bridge", "road",
-    "station", "harbour", "castle", "temple", "church",
+    "city",
+    "village",
+    "market",
+    "garden",
+    "park",
+    "bridge",
+    "road",
+    "station",
+    "harbour",
+    "castle",
+    "temple",
+    "church",
     # actions / abstract
-    "running", "flying", "swimming", "dancing", "sleeping", "falling",
-    "glowing", "growing", "spinning", "melting", "floating", "exploding",
+    "running",
+    "flying",
+    "swimming",
+    "dancing",
+    "sleeping",
+    "falling",
+    "glowing",
+    "growing",
+    "spinning",
+    "melting",
+    "floating",
+    "exploding",
     # sensory
-    "loud", "quiet", "bright", "dark", "warm", "cold", "smooth", "rough",
-    "sharp", "soft", "heavy", "light", "fast", "slow",
+    "loud",
+    "quiet",
+    "bright",
+    "dark",
+    "warm",
+    "cold",
+    "smooth",
+    "rough",
+    "sharp",
+    "soft",
+    "heavy",
+    "light",
+    "fast",
+    "slow",
 ]
 
 

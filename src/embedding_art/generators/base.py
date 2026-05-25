@@ -5,10 +5,14 @@ Generators decode latent vectors into outputs (images, audio, video).
 
 Three protocol variants are provided:
 
-* ``Generator`` — the original v1 protocol (kept for backward compatibility).
-* ``LatentGenerator`` — v2 superset of Generator; same interface, new name.
+* ``Generator`` — the canonical latent-decoder protocol. Used everywhere.
 * ``DirectGenerator`` — directly optimized parameters (INR, pixel-space, etc.).
-* ``DiffusionGenerator`` — latent generator extended with embedding-guided diffusion.
+* ``DiffusionGenerator`` — latent generator extended with embedding-guided
+  diffusion.
+
+``LatentGenerator`` is a deprecated alias of ``Generator`` kept for
+backward compatibility with v2-vintage code; new code should import
+``Generator`` directly.
 """
 
 from typing import Any, Protocol
@@ -17,7 +21,13 @@ import torch
 
 
 class Generator(Protocol):
-    """Protocol for output generators."""
+    """Protocol for latent-decoded output generators.
+
+    Implementations expose a fixed-shape latent space and a deterministic
+    ``decode`` function from latent → output tensor. The
+    :class:`OptimizationStrategy` optimises the latent under a loss
+    computed against the encoder's embedding of ``decode(latent)``.
+    """
 
     @property
     def latent_shape(self) -> tuple[int, ...]:
@@ -59,36 +69,9 @@ class Generator(Protocol):
         ...
 
 
-class LatentGenerator(Protocol):
-    """Generator that decodes from a latent space.
-
-    Superset of ``Generator`` for v2.  The interface is identical; the new
-    name makes intent explicit in v2 code that explicitly distinguishes
-    latent-space generators from direct-parameter and diffusion generators.
-    """
-
-    @property
-    def latent_shape(self) -> tuple[int, ...]:
-        """Shape of the latent tensor this generator accepts."""
-        ...
-
-    @property
-    def output_modality(self) -> str:
-        """Output modality: 'image', 'audio', or 'video'."""
-        ...
-
-    @property
-    def device(self) -> torch.device:
-        """Device the generator is on."""
-        ...
-
-    def init_latent(self, seed: int | None = None) -> torch.Tensor:
-        """Initialize a random latent for optimization."""
-        ...
-
-    def decode(self, latent: torch.Tensor) -> torch.Tensor:
-        """Decode latent to output tensor."""
-        ...
+# Deprecated alias preserved for v2-era imports. New code should import
+# ``Generator`` directly. Scheduled for removal in v4.
+LatentGenerator = Generator
 
 
 class DirectGenerator(Protocol):

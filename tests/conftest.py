@@ -17,6 +17,12 @@ from embedding_art.core.concept import Concept
 from embedding_art.core.concept_spec import ConceptSpec
 from embedding_art.encoders.registry import EncoderCapability, EncoderCard
 
+# ``test_ws_integration.py`` is a manual websocket smoke script (top-level
+# async def + asyncio.run main); pytest cannot drive it without an event
+# loop plugin AND a running server. Excluded from collection until either
+# is wired.
+collect_ignore = ["test_ws_integration.py"]
+
 
 class MockEncoder:
     """

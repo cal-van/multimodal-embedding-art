@@ -2,10 +2,21 @@ import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import type { Job } from '../services/api';
+import { ShowcaseManifestView } from '../components/ShowcaseManifestView';
+
+interface ShowcaseEvent {
+    type: string;
+    track?: string;
+    modality?: string;
+    similarity?: number;
+    text_anchor?: Array<{ word: string; similarity?: number }> | null;
+    [key: string]: unknown;
+}
 
 export function JobPage() {
     const { id } = useParams<{ id: string }>();
     const [job, setJob] = useState<Job | null>(null);
+    const [events, setEvents] = useState<ShowcaseEvent[]>([]);
     const [error, setError] = useState<string | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
     const logsRef = useRef<HTMLDivElement>(null);
@@ -76,7 +87,12 @@ export function JobPage() {
                             return { ...prev, logs: [...prev.logs, msg.message] };
                         }
                         if (msg.type === 'result') {
-                            return { ...prev, result_url: msg.url };
+                            const next = { ...prev, result_url: msg.url };
+                            if (msg.kind === 'showcase') {
+                                next.manifest_url = msg.url;
+                                next.kind = 'showcase';
+                            }
+                            return next;
                         }
                         if (msg.type === 'progress') {
                             return {
@@ -91,6 +107,12 @@ export function JobPage() {
                         }
                         if (msg.type === 'error') {
                             return { ...prev, error: msg.message, status: 'failed' };
+                        }
+                        if (msg.type === 'showcase_event') {
+                            // Stored in a sibling state slot, not on the job
+                            // itself, so it doesn't shadow per-modality results.
+                            setEvents((prev) => [...prev, msg.event as ShowcaseEvent]);
+                            return prev;
                         }
                         return prev;
                     });
@@ -152,10 +174,13 @@ export function JobPage() {
 
     if (!job) return <div>Loading...</div>;
 
+    const isShowcase = job.kind === 'showcase';
+    const heading = isShowcase ? 'Showcase Job' : 'Optimization Job';
+
     return (
         <div className="flex flex-col gap-6">
             <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-bold">Optimization Job</h1>
+                <h1 className="text-2xl font-bold">{heading}</h1>
                 <div className={`badge ${job.status}`}>{job.status?.toUpperCase() || 'UNKNOWN'}</div>
             </div>
 
@@ -172,38 +197,129 @@ export function JobPage() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-6">
-                <div className="card flex flex-col gap-2 h-96 overflow-auto font-mono text-xs" ref={logsRef}>
-                    <h3 className="text-sm font-bold sticky top-0 bg-[#18181b] py-2 border-b border-[#27272a]">Logs</h3>
-                    {(job.logs || []).map((log, i) => (
-                        <div key={i}>{log}</div>
-                    ))}
+            {isShowcase ? (
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+                    <div className="flex flex-col gap-4">
+                        <ShowcaseEventStream events={events} />
+                        {job.manifest_url ? (
+                            <ShowcaseManifestView manifestUrl={job.manifest_url} />
+                        ) : (
+                            <div className="card text-sm text-dim">
+                                Showcase running… the manifest will appear once renders are
+                                complete.
+                            </div>
+                        )}
+                    </div>
+                    <div
+                        className="card flex flex-col gap-2 h-96 overflow-auto font-mono text-xs"
+                        ref={logsRef}
+                    >
+                        <h3 className="text-sm font-bold sticky top-0 bg-[#18181b] py-2 border-b border-[#27272a]">
+                            Logs
+                        </h3>
+                        {(job.logs || []).map((log, i) => (
+                            <div key={i}>{log}</div>
+                        ))}
+                    </div>
                 </div>
+            ) : (
+                <div className="grid grid-cols-2 gap-6">
+                    <div
+                        className="card flex flex-col gap-2 h-96 overflow-auto font-mono text-xs"
+                        ref={logsRef}
+                    >
+                        <h3 className="text-sm font-bold sticky top-0 bg-[#18181b] py-2 border-b border-[#27272a]">
+                            Logs
+                        </h3>
+                        {(job.logs || []).map((log, i) => (
+                            <div key={i}>{log}</div>
+                        ))}
+                    </div>
 
-                <div className="card flex items-center justify-center text-dim bg-black/20 overflow-hidden relative">
-                    {job.result_url ? (
-                        <div className="relative w-full h-full flex items-center justify-center">
-                            <img
-                                src={`http://127.0.0.1:8000${job.result_url}`}
-                                alt="Optimization Result"
-                                className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
-                            />
-                            <a
-                                href={`http://127.0.0.1:8000${job.result_url}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="absolute bottom-4 right-4 bg-white/10 hover:bg-white/20 text-white px-3 py-1 rounded-full text-xs backdrop-blur-sm transition-colors"
-                            >
-                                Open Full
-                            </a>
-                        </div>
-                    ) : (
-                        <div className="flex flex-col items-center gap-2">
-                            <div className="animate-pulse">Waiting for result from {job.output_modality}...</div>
+                    <div className="card flex items-center justify-center text-dim bg-black/20 overflow-hidden relative">
+                        {job.result_url ? (
+                            <div className="relative w-full h-full flex items-center justify-center">
+                                <img
+                                    src={`http://127.0.0.1:8000${job.result_url}`}
+                                    alt="Optimization Result"
+                                    className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                                />
+                                <a
+                                    href={`http://127.0.0.1:8000${job.result_url}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="absolute bottom-4 right-4 bg-white/10 hover:bg-white/20 text-white px-3 py-1 rounded-full text-xs backdrop-blur-sm transition-colors"
+                                >
+                                    Open Full
+                                </a>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center gap-2">
+                                <div className="animate-pulse">
+                                    Waiting for result…
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+
+function ShowcaseEventStream({ events }: { events: ShowcaseEvent[] }) {
+    if (events.length === 0) {
+        return (
+            <div className="card text-sm text-dim">
+                Waiting for showcase events…
+            </div>
+        );
+    }
+
+    // Build a compact view: latest modality activity, plus the most recent
+    // text-anchor readout from any modality_complete event.
+    const last = events[events.length - 1];
+    const lastComplete = [...events].reverse().find((e) => e.type === 'modality_complete');
+
+    return (
+        <div className="card flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold uppercase tracking-wide">Live Stream</h3>
+                <span className="text-xs text-dim font-mono">
+                    {last.type}
+                    {last.modality ? ` · ${last.modality}` : ''}
+                    {last.track ? ` · ${last.track}` : ''}
+                </span>
+            </div>
+            {lastComplete && (
+                <div className="text-xs text-dim flex flex-col gap-1">
+                    <div>
+                        Last complete:{' '}
+                        <span className="font-mono">
+                            {lastComplete.modality} · sim=
+                            {typeof lastComplete.similarity === 'number'
+                                ? lastComplete.similarity.toFixed(3)
+                                : '?'}
+                        </span>
+                    </div>
+                    {Array.isArray(lastComplete.text_anchor) && lastComplete.text_anchor.length > 0 && (
+                        <div>
+                            text-anchor:{' '}
+                            <span className="font-mono">
+                                {lastComplete.text_anchor
+                                    .slice(0, 8)
+                                    .map((t) =>
+                                        typeof t.similarity === 'number'
+                                            ? `${t.word} (${t.similarity.toFixed(2)})`
+                                            : t.word,
+                                    )
+                                    .join(', ')}
+                            </span>
                         </div>
                     )}
                 </div>
-            </div>
+            )}
         </div>
     );
 }

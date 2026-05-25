@@ -81,6 +81,97 @@ def collect(ctx: click.Context, encoder, dataset_path, output_path, max_samples)
 
 
 # ---------------------------------------------------------------------------
+# sae collect-multimodal
+# ---------------------------------------------------------------------------
+
+
+@sae.command("collect-multimodal")
+@click.option(
+    "--encoder",
+    type=str,
+    default="languagebind",
+    show_default=True,
+    help="Canonical multimodal encoder (must expose encode_{image,audio,video,text}).",
+)
+@click.option(
+    "--dataset",
+    "dataset_path",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    required=True,
+    help=(
+        "Root directory scanned recursively for media files. Images / "
+        "audio / video are grouped by extension. A 'texts.txt' file at "
+        "the root (one prompt per line) is consumed as the text modality."
+    ),
+)
+@click.option(
+    "--output-dir",
+    type=click.Path(),
+    required=True,
+    help="Directory to write per-modality *_embeddings.pt files.",
+)
+@click.option(
+    "--modalities",
+    type=str,
+    default="image,audio,video,text",
+    show_default=True,
+    help="Comma-separated subset of {image,audio,video,text}.",
+)
+@click.option(
+    "--max-samples-per-modality",
+    type=int,
+    default=None,
+    help="Optional cap; applied independently to each modality.",
+)
+@click.pass_context
+def collect_multimodal(
+    ctx: click.Context,
+    encoder: str,
+    dataset_path: str,
+    output_dir: str,
+    modalities: str,
+    max_samples_per_modality: int | None,
+) -> None:
+    """Collect per-modality embeddings for ``sae train-stack``.
+
+    Companion to ``sae collect`` (which is image-only) — this scans a
+    mixed-content dataset and emits the four ``*_embeddings.pt`` files
+    that the per-modality + shared MSAE training pipeline consumes.
+    """
+    loaded_config = ctx.obj.get("config", {}) if ctx.obj else {}
+    debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
+
+    try:
+        from embedding_art.encoders.defaults import create_default_registry
+        from embedding_art.sae.training import collect_multimodal_embeddings
+
+        device = loaded_config.get("device", "mps")
+        registry = create_default_registry()
+        encoder_instance = registry.load(encoder, device=device)
+        modality_list = [m.strip() for m in modalities.split(",") if m.strip()]
+
+        saved = collect_multimodal_embeddings(
+            encoder=encoder_instance,
+            dataset_path=Path(dataset_path),
+            output_dir=Path(output_dir),
+            modalities=modality_list,
+            max_samples_per_modality=max_samples_per_modality,
+        )
+
+        if not saved:
+            console.print(
+                "[yellow]No embeddings were collected. Verify the dataset directory "
+                "contains files of the requested modalities.[/yellow]"
+            )
+            return
+        for modality, path in saved.items():
+            console.print(f"[bold green]{modality:>5}: {path}[/bold green]")
+    except Exception as e:
+        handle_exception(e, debug_mode)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # sae train
 # ---------------------------------------------------------------------------
 
@@ -122,13 +213,52 @@ def collect(ctx: click.Context, encoder, dataset_path, output_path, max_samples)
     show_default=True,
     help="L1 sparsity penalty coefficient",
 )
+@click.option(
+    "--backend",
+    type=click.Choice(["torch", "mlx", "auto"]),
+    default="torch",
+    show_default=True,
+    help="Training backend. 'torch' is the canonical default. 'mlx' uses "
+    "Apple's MLX framework (~2-3x throughput on M1/M2 Max; macOS only). "
+    "'auto' picks mlx when available, otherwise torch.",
+)
+@click.option(
+    "--sae-type",
+    type=click.Choice(["groupsparse", "matryoshka"]),
+    default="groupsparse",
+    show_default=True,
+    help="SAE flavor. 'groupsparse' is the canonical TopK + group-sparse loss "
+    "path. 'matryoshka' trains a nested-prefix SAE that Pareto-dominates a "
+    "plain SAE at any width <= the largest nest, and lets inference pick a "
+    "width on the fly.",
+)
+@click.option(
+    "--nested-sizes",
+    type=str,
+    default="1024,4096,16384",
+    show_default=True,
+    help="Comma-separated strictly-increasing nest widths for Matryoshka. "
+    "Largest entry is the full feature count; --features is ignored for "
+    "this SAE type.",
+)
 @click.pass_context
-def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, lambda_):
+def train(
+    ctx: click.Context,
+    embeddings_path,
+    output_path,
+    features,
+    sparsity,
+    lambda_,
+    backend,
+    sae_type,
+    nested_sizes,
+):
     """Train a Sparse Autoencoder on collected embeddings."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
 
     try:
         import torch
+
         from embedding_art.sae.training import train_sae
 
         embeddings_path = Path(embeddings_path)
@@ -143,20 +273,221 @@ def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, 
             embed_dim = data.shape[1]
             n_samples = data.shape[0]
 
+        chosen_backend = _resolve_backend(backend)
+
+        if sae_type == "matryoshka":
+            if chosen_backend == "mlx":
+                console.print(
+                    "[yellow]MLX backend not yet supported for Matryoshka; "
+                    "falling back to the torch path.[/yellow]"
+                )
+            from embedding_art.sae.training import train_matryoshka_sae_pipeline
+
+            try:
+                nested = tuple(int(s.strip()) for s in nested_sizes.split(",") if s.strip())
+            except ValueError as exc:
+                raise click.UsageError(
+                    f"--nested-sizes must be comma-separated ints, got {nested_sizes!r}"
+                ) from exc
+            console.print(
+                f"[bold]Training Matryoshka SAE: {embed_dim}d → nests={nested} "
+                f"(TopK-{sparsity}) on {n_samples} samples[/bold]"
+            )
+            train_matryoshka_sae_pipeline(
+                embeddings_path=embeddings_path,
+                output_path=output_path,
+                embed_dim=embed_dim,
+                nested_sizes=nested,
+                k=sparsity,
+            )
+        elif chosen_backend == "mlx":
+            from embedding_art.sae.mlx_training import train_sae_mlx
+
+            console.print(
+                f"[bold]Training SAE (backend={chosen_backend}): {embed_dim}d → {features} "
+                f"features (λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
+            )
+            train_sae_mlx(
+                embeddings_path=embeddings_path,
+                output_path=output_path,
+                embed_dim=embed_dim,
+                n_features=features,
+                k=sparsity,
+                lambda_gs=lambda_,
+            )
+        else:
+            console.print(
+                f"[bold]Training SAE (backend={chosen_backend}): {embed_dim}d → {features} "
+                f"features (λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
+            )
+            train_sae(
+                embeddings_path=embeddings_path,
+                output_path=output_path,
+                embed_dim=embed_dim,
+                n_features=features,
+                k=sparsity,
+                lambda_gs=lambda_,
+            )
+        console.print(f"[bold green]SAE saved to {output_path}[/bold green]")
+
+    except Exception as e:
+        handle_exception(e, debug_mode)
+        sys.exit(1)
+
+
+def _resolve_backend(requested: str) -> str:
+    """Resolve the backend choice.
+
+    ``auto`` picks MLX when available, else falls back to torch with a
+    visible note. ``mlx`` requested explicitly falls back to torch with
+    a warning when MLX is not installed (the alternative — hard error —
+    would block users on Linux who copy-pasted a Mac command).
+    """
+    from embedding_art.sae.mlx_training import mlx_available
+
+    if requested == "torch":
+        return "torch"
+    available = mlx_available()
+    if requested == "mlx":
+        if available:
+            return "mlx"
         console.print(
-            f"[bold]Training SAE: {embed_dim}d → {features} features "
-            f"(λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
+            "[yellow]MLX requested but not installed; falling back to the "
+            "PyTorch backend. Run on macOS with `pip install mlx` to enable."
+            "[/yellow]"
+        )
+        return "torch"
+    # auto
+    return "mlx" if available else "torch"
+
+
+# ---------------------------------------------------------------------------
+# sae train-stack — per-modality SAE stack (M3)
+# ---------------------------------------------------------------------------
+
+
+@sae.command("train-stack")
+@click.option(
+    "--image-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to image-modality embeddings (.pt from 'sae collect').",
+)
+@click.option(
+    "--audio-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to audio-modality embeddings.",
+)
+@click.option(
+    "--video-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to video-modality embeddings.",
+)
+@click.option(
+    "--text-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to text-modality embeddings.",
+)
+@click.option(
+    "--shared-embeddings",
+    type=click.Path(exists=True),
+    default=None,
+    help="Path to mean-pooled-across-modalities embeddings (the shared SAE).",
+)
+@click.option(
+    "--output-root",
+    type=click.Path(),
+    required=True,
+    help="Root directory under which per-modality subdirs will be written.",
+)
+@click.option(
+    "--features",
+    type=int,
+    default=4096,
+    show_default=True,
+    help="SAE bottleneck width (same across modalities).",
+)
+@click.option(
+    "--sparsity",
+    type=int,
+    default=32,
+    show_default=True,
+    help="TopK sparsity (active features per input).",
+)
+@click.option(
+    "--iterations",
+    type=int,
+    default=25000,
+    show_default=True,
+    help="Per-modality gradient steps.",
+)
+@click.option(
+    "--embed-dim",
+    type=int,
+    default=768,
+    show_default=True,
+    help="Canonical embedding dimension. 768 for LanguageBind.",
+)
+@click.pass_context
+def train_stack(
+    ctx: click.Context,
+    image_embeddings,
+    audio_embeddings,
+    video_embeddings,
+    text_embeddings,
+    shared_embeddings,
+    output_root,
+    features,
+    sparsity,
+    iterations,
+    embed_dim,
+) -> None:
+    """Train the per-modality SAE stack (M3).
+
+    Trains one SAE per supplied modality embedding file. At least one of
+    --image-embeddings / --audio-embeddings / --video-embeddings /
+    --text-embeddings / --shared-embeddings must be supplied.
+    """
+    debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
+
+    try:
+        from embedding_art.sae.multimodal_stack import train_multimodal_sae_stack
+
+        embeddings_by_modality = {}
+        for modality, path in [
+            ("image", image_embeddings),
+            ("audio", audio_embeddings),
+            ("video", video_embeddings),
+            ("text", text_embeddings),
+            ("shared", shared_embeddings),
+        ]:
+            if path is not None:
+                embeddings_by_modality[modality] = Path(path)
+
+        if not embeddings_by_modality:
+            raise click.UsageError(
+                "Supply at least one of --image-embeddings, "
+                "--audio-embeddings, --video-embeddings, --text-embeddings, "
+                "--shared-embeddings."
+            )
+
+        console.print(
+            f"[bold]Training SAE stack for {sorted(embeddings_by_modality)} → "
+            f"{features} features each, TopK-{sparsity}[/bold]"
         )
 
-        train_sae(
-            embeddings_path=embeddings_path,
-            output_path=output_path,
+        train_multimodal_sae_stack(
+            embeddings_by_modality=embeddings_by_modality,
+            output_root=Path(output_root),
             embed_dim=embed_dim,
             n_features=features,
             k=sparsity,
-            lambda_gs=lambda_,
+            n_iterations=iterations,
         )
-        console.print(f"[bold green]SAE saved to {output_path}[/bold green]")
+        console.print(f"[bold green]SAE stack saved under {output_root}[/bold green]")
 
     except Exception as e:
         handle_exception(e, debug_mode)
@@ -191,6 +522,7 @@ def label(ctx: click.Context, model_path, encoder):
 
     try:
         import torch
+
         from embedding_art.core.concept import Concept
         from embedding_art.encoders.defaults import create_default_registry
 
@@ -236,11 +568,190 @@ def label(ctx: click.Context, model_path, encoder):
             console.print(table)
             console.print()
 
-        console.print("[dim]Label session ended. Model not re-saved (labels are for inspection only).[/dim]")
+        console.print(
+            "[dim]Label session ended. Model not re-saved (labels are for inspection only).[/dim]"
+        )
 
     except Exception as e:
         handle_exception(e, debug_mode)
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# sae auto-label
+# ---------------------------------------------------------------------------
+
+
+@sae.command("auto-label")
+@click.option(
+    "--model",
+    "model_path",
+    type=click.Path(exists=True),
+    required=True,
+    help="Path to a trained SAE checkpoint directory or weights file.",
+)
+@click.option(
+    "--encoder",
+    type=str,
+    default="languagebind",
+    show_default=True,
+    help="Encoder used to embed the labelling vocabulary.",
+)
+@click.option(
+    "--device",
+    type=str,
+    default="mps",
+    show_default=True,
+    help="Torch device for encoding vocabulary words.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(),
+    default=None,
+    help=(
+        "Destination JSON file (defaults to feature_labels.json next to the SAE). "
+        "This is the file the showcase command auto-loads."
+    ),
+)
+@click.option(
+    "--use-vlm/--no-vlm",
+    default=False,
+    show_default=True,
+    help=(
+        "Use the optional VLM labeller (requires --vlm-adapter or the "
+        "ANTHROPIC_API_KEY env var). Falls back to cosine labels per-feature "
+        "on any failure."
+    ),
+)
+@click.option(
+    "--corpus",
+    "corpus_path",
+    type=click.Path(exists=True),
+    default=None,
+    help=(
+        "Optional path to a corpus .pt file (produced by 'sae collect') with "
+        "both 'embeddings' and 'sources' keys. When provided alongside "
+        "--use-vlm, switches to the activating-examples labeller — the LLM "
+        "is prompted with the top-K corpus entries that activate each "
+        "feature, rather than the top-K nearest vocabulary words."
+    ),
+)
+@click.option(
+    "--top-k-examples",
+    type=int,
+    default=8,
+    show_default=True,
+    help="How many activating examples per feature to include in the LLM prompt.",
+)
+@click.pass_context
+def auto_label(
+    ctx: click.Context,
+    model_path: str,
+    encoder: str,
+    device: str,
+    output_path: str | None,
+    use_vlm: bool,
+    corpus_path: str | None,
+    top_k_examples: int,
+) -> None:
+    """Generate feature_labels.json non-interactively.
+
+    Uses :class:`~embedding_art.sae.labelling.CosineLabeller` by default;
+    pass --use-vlm to opt into :class:`VLMLabeller` (with a graceful
+    fallback to cosine labels per-feature on any LLM failure).
+    """
+    debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
+    try:
+        import json
+
+        from embedding_art.encoders.defaults import create_default_registry
+        from embedding_art.sae.labelling import (
+            ActivatingExamplesLabeller,
+            CosineLabeller,
+            VLMLabeller,
+        )
+
+        sae_path = Path(model_path)
+        registry = create_default_registry()
+        encoder_instance = registry.load(encoder, device=device)
+
+        labeller: object
+        if use_vlm:
+            llm_callable = _resolve_vlm_callable()
+            if llm_callable is None:
+                console.print(
+                    "[yellow]No VLM adapter resolved (ANTHROPIC_API_KEY missing). "
+                    "Falling back to cosine labeller.[/yellow]"
+                )
+                labeller = CosineLabeller()
+            elif corpus_path is not None:
+                console.print(
+                    f"[cyan]Using activating-examples labeller with corpus "
+                    f"{corpus_path} (top-{top_k_examples} examples per feature).[/cyan]"
+                )
+                labeller = ActivatingExamplesLabeller(
+                    corpus_path=Path(corpus_path),
+                    llm_callable=llm_callable,
+                    top_k_examples=top_k_examples,
+                )
+            else:
+                labeller = VLMLabeller(llm_callable=llm_callable)
+        else:
+            labeller = CosineLabeller()
+
+        labels = labeller.label_all(sae_path=sae_path, encoder=encoder_instance)
+
+        if output_path is None:
+            target = (
+                sae_path / "feature_labels.json"
+                if sae_path.is_dir()
+                else sae_path.parent / "feature_labels.json"
+            )
+        else:
+            target = Path(output_path)
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({i: label for i, label in enumerate(labels)}, indent=2))
+        console.print(f"[bold green]Wrote {len(labels)} feature labels to {target}[/bold green]")
+
+    except Exception as e:
+        handle_exception(e, debug_mode)
+        sys.exit(1)
+
+
+def _resolve_vlm_callable() -> object | None:
+    """Try to construct a default Anthropic-backed VLM callable.
+
+    Returns ``None`` if the ``anthropic`` package isn't installed or the
+    ``ANTHROPIC_API_KEY`` env var isn't set — keeping the optional
+    dependency truly optional.
+    """
+    import os
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+
+    try:
+        import anthropic
+    except ImportError:
+        return None
+
+    client = anthropic.Anthropic()
+
+    def adapter(prompt: str) -> str:
+        msg = client.messages.create(
+            model="claude-3-5-sonnet-latest",
+            max_tokens=20,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        # Defensive: extract the first text block.
+        for block in msg.content:
+            if getattr(block, "type", None) == "text":
+                return block.text
+        return ""
+
+    return adapter
 
 
 # ---------------------------------------------------------------------------

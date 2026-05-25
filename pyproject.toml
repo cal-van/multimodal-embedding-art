@@ -72,6 +72,11 @@ addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
+    # slow tests require real model weights (gated HF downloads, multi-GB
+    # checkpoints) and frequently MPS — neither is available in headless
+    # Linux CI. Enable them on Apple Silicon with `-m slow`.
+    "-m",
+    "not slow",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

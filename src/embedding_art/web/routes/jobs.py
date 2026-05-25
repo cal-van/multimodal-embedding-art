@@ -10,12 +10,44 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 class CreateJobRequest(BaseModel):
     target_text: list[str] = []
     output_modality: str = "image"
-    encoder_name: str = "imagebind"
+    encoder_name: str = "languagebind"
     steps: int = 500
     learning_rate: float = 0.1
     seed: int | None = None
     similarity_weight: float = 1.0
     feature_matching_weight: float = 0.5
+
+
+class CreateShowcaseRequest(BaseModel):
+    """v3 four-modality showcase request.
+
+    Mirrors the ``embed-art showcase`` CLI surface.
+    """
+
+    target_text: str
+    modalities: list[str] = ["image", "audio", "video", "text"]
+    encoder_name: str = "languagebind"
+    image_backbone: str = "sd35"
+    audio_backbone: str = "stable-audio-open"
+    video_backbone: str = "ltx-video"
+    tracks: list[str] = ["honest"]
+    autocast_dtype: str = "fp32"
+    interpret: bool = True
+    evaluate: bool = True
+    sae_path: str | None = None
+    steps: int = 200
+    seed: int | None = None
+
+    @field_validator("tracks")
+    @classmethod
+    def _validate_tracks(cls, v: list[str]) -> list[str]:
+        valid = {"honest", "natural"}
+        bad = [t for t in v if t not in valid]
+        if bad:
+            raise ValueError(f"Unknown tracks {bad}; valid tracks: {sorted(valid)}")
+        if not v:
+            raise ValueError("At least one track required")
+        return v
 
 
 class CompareJobRequest(BaseModel):
@@ -40,9 +72,13 @@ class JobResponse(BaseModel):
     error: str | None
     logs: list[str]
     result_url: str | None = None
-    encoder_name: str = "imagebind"
+    encoder_name: str = "languagebind"
     similarity_weight: float = 1.0
     feature_matching_weight: float = 0.5
+    kind: str = "single"
+    manifest_url: str | None = None
+    tracks: list[str] = []
+    modalities: list[str] = []
 
 
 @router.post("/", response_model=JobResponse)
@@ -74,6 +110,35 @@ async def create_compare_job(request: CompareJobRequest) -> JobResponse:
     )
     await job_manager.start_job(job.id)
 
+    return _map_job_to_response(job)
+
+
+@router.post("/showcase", response_model=JobResponse)
+async def create_showcase_job(request: CreateShowcaseRequest) -> JobResponse:
+    """Create a v3 four-modality showcase job.
+
+    Renders the target concept across the requested modalities in a single
+    shared encoder space and writes a manifest summarising the bundle.
+    """
+    if not request.target_text.strip():
+        raise HTTPException(status_code=400, detail="target_text must not be empty")
+
+    job = job_manager.create_showcase_job(
+        target_text=request.target_text,
+        modalities=request.modalities,
+        encoder_name=request.encoder_name,
+        image_backbone=request.image_backbone,
+        audio_backbone=request.audio_backbone,
+        video_backbone=request.video_backbone,
+        tracks=request.tracks,
+        autocast_dtype=request.autocast_dtype,
+        interpret=request.interpret,
+        evaluate=request.evaluate,
+        sae_path=request.sae_path,
+        steps=request.steps,
+        seed=request.seed,
+    )
+    await job_manager.start_job(job.id)
     return _map_job_to_response(job)
 
 
@@ -136,4 +201,8 @@ def _map_job_to_response(job: Job) -> JobResponse:
         encoder_name=job.encoder_name,
         similarity_weight=job.similarity_weight,
         feature_matching_weight=job.feature_matching_weight,
+        kind=job.kind,
+        manifest_url=job.manifest_path,
+        tracks=job.tracks if job.kind == "showcase" else [],
+        modalities=job.modalities if job.kind == "showcase" else [],
     )

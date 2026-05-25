@@ -12,9 +12,19 @@ export function Sidebar() {
             </div>
 
             <nav className="flex flex-col gap-2">
+                <Link to="/showcase">
+                    <button className={`w-full text-left ${isActive('/showcase') ? 'primary' : ''}`}>
+                        ✨ Showcase
+                    </button>
+                </Link>
                 <Link to="/create">
-                    <button className={`w-full text-left ${isActive('/create') ? 'primary' : ''}`}>
-                        + Create
+                    <button className={`w-full text-left ${isActive('/create') ? 'bg-[#27272a]' : ''}`}>
+                        + Single-modality
+                    </button>
+                </Link>
+                <Link to="/anchor-compare">
+                    <button className={`w-full text-left ${isActive('/anchor-compare') ? 'bg-[#27272a]' : ''}`}>
+                        🧭 Anchor Compare
                     </button>
                 </Link>
 

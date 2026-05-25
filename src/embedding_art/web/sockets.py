@@ -1,6 +1,7 @@
 from typing import Dict, List
 from fastapi import WebSocket
 
+
 class ConnectionManager:
     """Manages WebSocket connections for job updates."""
 
@@ -30,5 +31,6 @@ class ConnectionManager:
                 except RuntimeError:
                     # Handle disconnected clients gracefully if needed
                     pass
+
 
 manager = ConnectionManager()
