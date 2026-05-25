@@ -83,6 +83,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Compatibility patch for newer transformers versions (>=4.35) where
+# transformers.models.clip.modeling_clip._expand_mask was refactored/removed,
+# and newer torchaudio versions where set_audio_backend was removed.
+try:
+    import transformers.models.clip.modeling_clip as modeling_clip
+
+    if not hasattr(modeling_clip, "_expand_mask"):
+
+        def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: int | None = None):
+            bsz, src_len = mask.size()
+            tgt_len = tgt_len if tgt_len is not None else src_len
+            expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
+            inverted_mask = 1.0 - expanded_mask
+            return inverted_mask.masked_fill(inverted_mask.bool(), torch.finfo(dtype).min)
+
+        modeling_clip._expand_mask = _expand_mask
+except Exception as e:
+    logger.debug(f"Failed to monkeypatch transformers.models.clip.modeling_clip._expand_mask: {e}")
+
+try:
+    import torchaudio
+
+    if not hasattr(torchaudio, "set_audio_backend"):
+        torchaudio.set_audio_backend = lambda backend: None
+except Exception as e:
+    logger.debug(f"Failed to monkeypatch torchaudio.set_audio_backend: {e}")
+
+
 # Map our modality names → LanguageBind HuggingFace checkpoint identifiers.
 _MODALITY_CHECKPOINTS: dict[str, str] = {
     "image": "LanguageBind/LanguageBind_Image",
