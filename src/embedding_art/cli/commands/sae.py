@@ -213,8 +213,17 @@ def collect_multimodal(
     show_default=True,
     help="L1 sparsity penalty coefficient",
 )
+@click.option(
+    "--backend",
+    type=click.Choice(["torch", "mlx", "auto"]),
+    default="torch",
+    show_default=True,
+    help="Training backend. 'torch' is the canonical default. 'mlx' uses "
+    "Apple's MLX framework (~2-3x throughput on M1/M2 Max; macOS only). "
+    "'auto' picks mlx when available, otherwise torch.",
+)
 @click.pass_context
-def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, lambda_):
+def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, lambda_, backend):
     """Train a Sparse Autoencoder on collected embeddings."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
 
@@ -235,24 +244,63 @@ def train(ctx: click.Context, embeddings_path, output_path, features, sparsity, 
             embed_dim = data.shape[1]
             n_samples = data.shape[0]
 
+        chosen_backend = _resolve_backend(backend)
         console.print(
-            f"[bold]Training SAE: {embed_dim}d → {features} features "
-            f"(λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
+            f"[bold]Training SAE (backend={chosen_backend}): {embed_dim}d → {features} "
+            f"features (λ={lambda_}, TopK-{sparsity}) on {n_samples} samples[/bold]"
         )
 
-        train_sae(
-            embeddings_path=embeddings_path,
-            output_path=output_path,
-            embed_dim=embed_dim,
-            n_features=features,
-            k=sparsity,
-            lambda_gs=lambda_,
-        )
+        if chosen_backend == "mlx":
+            from embedding_art.sae.mlx_training import train_sae_mlx
+
+            train_sae_mlx(
+                embeddings_path=embeddings_path,
+                output_path=output_path,
+                embed_dim=embed_dim,
+                n_features=features,
+                k=sparsity,
+                lambda_gs=lambda_,
+            )
+        else:
+            train_sae(
+                embeddings_path=embeddings_path,
+                output_path=output_path,
+                embed_dim=embed_dim,
+                n_features=features,
+                k=sparsity,
+                lambda_gs=lambda_,
+            )
         console.print(f"[bold green]SAE saved to {output_path}[/bold green]")
 
     except Exception as e:
         handle_exception(e, debug_mode)
         sys.exit(1)
+
+
+def _resolve_backend(requested: str) -> str:
+    """Resolve the backend choice.
+
+    ``auto`` picks MLX when available, else falls back to torch with a
+    visible note. ``mlx`` requested explicitly falls back to torch with
+    a warning when MLX is not installed (the alternative — hard error —
+    would block users on Linux who copy-pasted a Mac command).
+    """
+    from embedding_art.sae.mlx_training import mlx_available
+
+    if requested == "torch":
+        return "torch"
+    available = mlx_available()
+    if requested == "mlx":
+        if available:
+            return "mlx"
+        console.print(
+            "[yellow]MLX requested but not installed; falling back to the "
+            "PyTorch backend. Run on macOS with `pip install mlx` to enable."
+            "[/yellow]"
+        )
+        return "torch"
+    # auto
+    return "mlx" if available else "torch"
 
 
 # ---------------------------------------------------------------------------
