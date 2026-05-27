@@ -26,7 +26,7 @@ from embedding_art.cli.utils import console
 def web(port: int, host: str, reload: bool) -> None:
     """Start the Web UI server."""
     console.print(f"[bold green]Starting Web UI on http://{host}:{port}[/bold green]")
-    
+
     uvicorn.run(
         "embedding_art.web.app:app",
         host=host,

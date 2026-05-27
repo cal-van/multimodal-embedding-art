@@ -24,7 +24,6 @@ from embedding_art.core.concept import Concept
 from embedding_art.exceptions import FeatureNotFoundError
 from embedding_art.sae.lens import SAEDecomposition, SAELens
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers / fixtures
 # ---------------------------------------------------------------------------

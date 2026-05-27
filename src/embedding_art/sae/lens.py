@@ -290,9 +290,7 @@ class SAELens:
                 reconstruction_error=0.0,
             )
         )
-        error = float(
-            torch.norm(x - reconstruction).item() / (torch.norm(x).item() + 1e-8)
-        )
+        error = float(torch.norm(x - reconstruction).item() / (torch.norm(x).item() + 1e-8))
 
         # Build the active_features dict
         nonzero_indices = sparse_acts[0].nonzero(as_tuple=True)[0].tolist()
@@ -412,9 +410,7 @@ class SAELens:
                 f"(expected [{d}, {n}])"
             )
         if self._bias.shape != (n,):
-            raise ValueError(
-                f"Shape mismatch: bias is {list(self._bias.shape)}, expected [{n}]"
-            )
+            raise ValueError(f"Shape mismatch: bias is {list(self._bias.shape)}, expected [{n}]")
         if self._pre_bias.shape != (d,):
             raise ValueError(
                 f"Shape mismatch: pre_bias is {list(self._pre_bias.shape)}, expected [{d}]"

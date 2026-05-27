@@ -116,7 +116,11 @@ def render(
         from embedding_art.core.config import LossConfig, OptimizationConfig
         from embedding_art.core.engine import EmbeddingArtEngine
         from embedding_art.encoders.defaults import create_default_registry
-        from embedding_art.generators import SDXLImageGenerator, AudioLDMGenerator, SVDVideoGenerator
+        from embedding_art.generators import (
+            SDXLImageGenerator,
+            AudioLDMGenerator,
+            SVDVideoGenerator,
+        )
 
         # Create registry and load encoder
         console.print("[bold]Loading encoder...[/bold]")
@@ -189,10 +193,16 @@ def render(
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if output == "image":
-            img = result.get_final_image(generator) if hasattr(result, "get_final_image") else _decode_image(result, generator)
+            img = (
+                result.get_final_image(generator)
+                if hasattr(result, "get_final_image")
+                else _decode_image(result, generator)
+            )
             img.save(output_path)
         else:
-            raise click.UsageError(f"Saving '{output}' output not yet implemented in render command")
+            raise click.UsageError(
+                f"Saving '{output}' output not yet implemented in render command"
+            )
 
         console.print(f"[bold green]Saved to {output_path}[/bold green]")
 

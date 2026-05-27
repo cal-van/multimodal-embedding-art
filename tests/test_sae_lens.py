@@ -17,7 +17,6 @@ import torch.nn.functional as F
 from embedding_art.exceptions import FeatureNotFoundError
 from embedding_art.sae.lens import SAEDecomposition, SAELens
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -150,9 +149,7 @@ class TestDecompose:
         n_nonzero = int((result.activations != 0).sum().item())
         assert n_nonzero == K
 
-    def test_active_features_count_matches_k(
-        self, sae: SAELens, embedding: torch.Tensor
-    ) -> None:
+    def test_active_features_count_matches_k(self, sae: SAELens, embedding: torch.Tensor) -> None:
         """active_features dict has exactly k entries."""
         result = sae.decompose(embedding)
         assert len(result.active_features) == K
@@ -173,9 +170,7 @@ class TestDecompose:
         for strength in result.active_features.values():
             assert strength > 0.0
 
-    def test_reconstruction_error_is_finite(
-        self, sae: SAELens, embedding: torch.Tensor
-    ) -> None:
+    def test_reconstruction_error_is_finite(self, sae: SAELens, embedding: torch.Tensor) -> None:
         """reconstruction_error is a finite non-negative float."""
         result = sae.decompose(embedding)
         assert isinstance(result.reconstruction_error, float)
@@ -211,9 +206,7 @@ class TestDecompose:
 class TestReconstruct:
     """SAELens.reconstruct() decodes activations back to embedding space."""
 
-    def test_reconstruct_returns_correct_shape(
-        self, sae: SAELens, embedding: torch.Tensor
-    ) -> None:
+    def test_reconstruct_returns_correct_shape(self, sae: SAELens, embedding: torch.Tensor) -> None:
         """Reconstruction has shape [1, embed_dim]."""
         decomp = sae.decompose(embedding)
         recon = sae.reconstruct(decomp)
@@ -222,7 +215,9 @@ class TestReconstruct:
     def test_zero_activations_give_pre_bias_reconstruction(self, sae: SAELens) -> None:
         """Reconstructing all-zero activations returns the pre_bias vector."""
         zero_acts = torch.zeros(1, N_FEATURES)
-        decomp = SAEDecomposition(activations=zero_acts, active_features={}, reconstruction_error=0.0)
+        decomp = SAEDecomposition(
+            activations=zero_acts, active_features={}, reconstruction_error=0.0
+        )
         recon = sae.reconstruct(decomp)
         expected = sae._pre_bias.unsqueeze(0)
         assert torch.allclose(recon, expected, atol=1e-6)
@@ -262,9 +257,7 @@ class TestReconstruct:
 class TestManipulate:
     """SAELens.manipulate() adjusts named feature activations."""
 
-    def test_manipulate_changes_target_feature(
-        self, sae: SAELens, embedding: torch.Tensor
-    ) -> None:
+    def test_manipulate_changes_target_feature(self, sae: SAELens, embedding: torch.Tensor) -> None:
         """A manipulated feature has a different activation than the original."""
         decomp = sae.decompose(embedding)
         # Pick the first active feature and amplify it.
@@ -301,9 +294,7 @@ class TestManipulate:
         idx = sae._vocab_to_idx[target_name]
         assert float(new_decomp.activations[0, idx].item()) == 0.0
 
-    def test_manipulate_unknown_feature_raises(
-        self, sae: SAELens, embedding: torch.Tensor
-    ) -> None:
+    def test_manipulate_unknown_feature_raises(self, sae: SAELens, embedding: torch.Tensor) -> None:
         """Adjusting a feature not in the vocabulary raises FeatureNotFoundError."""
         decomp = sae.decompose(embedding)
         with pytest.raises(FeatureNotFoundError):
@@ -427,9 +418,7 @@ class TestActiveFeatures:
             tensor_val = float(decomp.activations[0, idx].item())
             assert tensor_val == pytest.approx(strength, abs=1e-6)
 
-    def test_no_inactive_features_in_dict(
-        self, sae: SAELens, embedding: torch.Tensor
-    ) -> None:
+    def test_no_inactive_features_in_dict(self, sae: SAELens, embedding: torch.Tensor) -> None:
         """Zero-activation features do not appear in active_features."""
         decomp = sae.decompose(embedding)
         for name in sae.vocab:

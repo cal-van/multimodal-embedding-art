@@ -59,4 +59,3 @@ class RenderResult:
     final_similarity: float
     config: OptimizationConfig | None = None
     checkpoints: list[Path] | None = None
-

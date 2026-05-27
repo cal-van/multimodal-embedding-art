@@ -60,6 +60,7 @@ def interpolate_v2(
     device: str,
 ) -> None:
     """Generate an interpolation series between two concepts using the v2 engine."""
+    import datetime
     from pathlib import Path
 
     from torchvision.transforms.functional import to_pil_image
@@ -70,7 +71,9 @@ def interpolate_v2(
     from embedding_art.encoders.defaults import create_default_registry
     from embedding_art.generators.image import SDXLImageGenerator
 
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = Path(output_dir)
+    output_path = output_path.parent / f"{output_path.name}_{timestamp}"
     output_path.mkdir(parents=True, exist_ok=True)
 
     registry = create_default_registry()

@@ -2,10 +2,7 @@ import sys
 
 import click
 
-from embedding_art.cli.utils import (
-    console, 
-    handle_exception
-)
+from embedding_art.cli.utils import console, handle_exception
 
 
 @click.command()
@@ -18,7 +15,7 @@ def embed(ctx, text, image, save, device):
     """Compute and optionally save an embedding."""
     loaded_config = ctx.obj.get("config", {}) if ctx.obj else {}
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
-    
+
     device = device if device is not None else loaded_config.get("device", "mps")
 
     if not text and not image:

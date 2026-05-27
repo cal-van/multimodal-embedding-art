@@ -4,10 +4,7 @@ from pathlib import Path
 import click
 from PIL import Image
 
-from embedding_art.cli.utils import (
-    console, 
-    handle_exception
-)
+from embedding_art.cli.utils import console, handle_exception
 
 
 @click.command()

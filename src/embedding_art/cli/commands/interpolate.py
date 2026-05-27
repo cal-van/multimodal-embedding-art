@@ -3,10 +3,7 @@ from pathlib import Path
 
 import click
 
-from embedding_art.cli.utils import (
-    console, 
-    handle_exception
-)
+from embedding_art.cli.utils import console, handle_exception
 
 
 @click.command()
@@ -35,16 +32,16 @@ def interpolate(ctx, concept_a, concept_b, steps, output, output_dir, opt_steps,
     # Get config/debug from context
     loaded_config = ctx.obj.get("config", {}) if ctx.obj else {}
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
-    
+
     # Use config device if not provided and not default
-    # Note: CLI default for device was argument default "mps" in original code, 
+    # Note: CLI default for device was argument default "mps" in original code,
     # but here we use None default to fallback to config.
     # Original main.py: default="mps" in @click.option.
     # If I change default to None, I can check config.
     # But usually best to keep defaults explicit or use None to detect user intent.
     # In my optimize.py I used default=None.
     # Here I used default=None in my new code above.
-    
+
     device = device if device is not None else loaded_config.get("device", "mps")
 
     try:
@@ -71,7 +68,11 @@ def interpolate(ctx, concept_a, concept_b, steps, output, output_dir, opt_steps,
         results = engine.interpolation_series(a, b, "image", steps=steps, config=config)
 
         # Save outputs
+        import datetime
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = Path(output_dir)
+        output_dir = output_dir.parent / f"{output_dir.name}_{timestamp}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         for i, result in enumerate(results):

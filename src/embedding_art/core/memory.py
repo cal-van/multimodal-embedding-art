@@ -14,7 +14,6 @@ import torch
 import torch.nn as nn
 from embedding_art.exceptions import OutOfMemoryError
 
-
 DEFAULT_MEMORY_LIMIT_MB = 48 * 1024  # 48GB default limit
 
 
@@ -267,7 +266,7 @@ class MemoryManager:
         """
         if not self._config.track_memory:
             return
-        
+
         self.check_memory_limit()
 
         usage = self.get_memory_usage()

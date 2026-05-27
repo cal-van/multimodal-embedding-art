@@ -20,7 +20,6 @@ from embedding_art.encoders.registry import EncoderCapability, EncoderCard
 from embedding_art.encoders.siglip2 import EMBEDDING_DIM, SigLIP2Encoder
 from embedding_art.exceptions import EncoderError
 
-
 # ---------------------------------------------------------------------------
 # Static / class-level tests — no model loading required
 # ---------------------------------------------------------------------------

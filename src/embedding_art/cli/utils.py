@@ -12,6 +12,7 @@ from PIL import Image
 console = Console()
 DEFAULT_VIDEO_FPS = 8
 
+
 def handle_exception(e: Exception, debug_mode: bool = False) -> None:
     """Handle an exception with user-friendly output."""
     from embedding_art.exceptions import (

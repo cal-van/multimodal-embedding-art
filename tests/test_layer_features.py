@@ -542,12 +542,16 @@ class TestCNNStatisticsExtractorDeterminism:
 
         extractor = CNNStatisticsExtractor()
         features_a = LayerFeatures(
-            tensor=tensor_a, spatial=True, shape_semantic="batch_channels_height_width",
-            layer_name="x"
+            tensor=tensor_a,
+            spatial=True,
+            shape_semantic="batch_channels_height_width",
+            layer_name="x",
         )
         features_b = LayerFeatures(
-            tensor=tensor_b, spatial=True, shape_semantic="batch_channels_height_width",
-            layer_name="x"
+            tensor=tensor_b,
+            spatial=True,
+            shape_semantic="batch_channels_height_width",
+            layer_name="x",
         )
 
         result_a = extractor.extract(features_a)

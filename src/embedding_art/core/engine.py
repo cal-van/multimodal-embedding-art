@@ -160,6 +160,7 @@ class EmbeddingArtEngine:
         output_modality: str = "image",
         strategy: Any = None,
         config: OptimizationConfig | None = None,
+        **kwargs: Any,
     ) -> Any:
         """Render a ConceptSpec (or an already-resolved Concept) via the v2 pipeline.
 
@@ -177,6 +178,7 @@ class EmbeddingArtEngine:
                 Defaults to a freshly constructed ``OptimizationStrategy``.
             config: Optimization hyper-parameters.  Defaults to
                 ``OptimizationConfig()`` when ``None``.
+            **kwargs: Extra arguments forwarded to the strategy's ``render`` method.
 
         Returns:
             :class:`~embedding_art.core.render_result.RenderResult` produced by
@@ -213,7 +215,7 @@ class EmbeddingArtEngine:
         if strategy is None:
             strategy = OptimizationStrategy()
 
-        return strategy.render(target, generator, encoder, config)
+        return strategy.render(target, generator, encoder, config, **kwargs)
 
     def render_compare(
         self,

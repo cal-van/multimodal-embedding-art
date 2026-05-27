@@ -91,7 +91,7 @@ class SDXLImageGenerator:
             seed: Random seed
             scale: Standard deviation of noise. Default 0.1 to avoid VAE saturation.
                   (Since we divide by 0.13025, a scale of 0.1 result in ~unit variance inputs)
-        
+
         Returns:
             Tensor with requires_grad=True
         """
@@ -100,12 +100,15 @@ class SDXLImageGenerator:
         else:
             generator = None
 
-        latent = torch.randn(
-            self.latent_shape,
-            device=self._device,
-            dtype=torch.float32,
-            generator=generator,
-        ) * scale
+        latent = (
+            torch.randn(
+                self.latent_shape,
+                device=self._device,
+                dtype=torch.float32,
+                generator=generator,
+            )
+            * scale
+        )
 
         latent.requires_grad_(True)
         return latent

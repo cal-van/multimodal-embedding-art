@@ -95,8 +95,7 @@ def get_memory_usage_mb(device: str) -> float | None:
 class ProgressObserver(Protocol):
     """Protocol for observing optimization progress."""
 
-    def on_start(self, total_steps: int, description: str = "Optimizing...") -> None:
-        ...
+    def on_start(self, total_steps: int, description: str = "Optimizing...") -> None: ...
 
     def on_step(
         self,
@@ -107,15 +106,14 @@ class ProgressObserver(Protocol):
         loss_history: list[float] | None = None,
         similarity_history: list[float] | None = None,
         device: str | None = None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    def on_finish(self) -> None:
-        ...
+    def on_finish(self) -> None: ...
 
 
 class NoOpProgressObserver:
     """Observer that does nothing."""
+
     def on_start(self, total_steps: int, description: str = "Optimizing...") -> None:
         pass
 
@@ -155,9 +153,7 @@ class SimpleProgressObserver:
         similarity_history: list[float] | None = None,
         device: str | None = None,
     ) -> None:
-        self.progress.update(
-            self.task_id, completed=step + 1, description=f"sim={similarity:.4f}"
-        )
+        self.progress.update(self.task_id, completed=step + 1, description=f"sim={similarity:.4f}")
 
     def on_finish(self) -> None:
         self.progress.stop()
@@ -230,7 +226,7 @@ class VerboseProgressObserver:
         prev_sim = None
         if similarity_history and len(similarity_history) >= 2:
             prev_sim = similarity_history[-2]
-        
+
         sim_style = get_similarity_style(sim_val, prev_sim)
         sim_text = Text(f"{sim_val:.4f}", style=sim_style)
         metrics_table.add_row("Similarity:", sim_text)

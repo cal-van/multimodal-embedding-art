@@ -23,7 +23,6 @@ from embedding_art.core.concept import Concept
 from embedding_art.core.config import LossConfig, OptimizationConfig
 from embedding_art.core.render_result import RenderResult
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------

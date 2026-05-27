@@ -81,11 +81,7 @@ class CLAPEncoder:
             from transformers import ClapModel, ClapProcessor
 
             logger.info("Loading CLAP model: %s", self._model_name)
-            self._model = (
-                ClapModel.from_pretrained(self._model_name)
-                .to(self._device)
-                .eval()
-            )
+            self._model = ClapModel.from_pretrained(self._model_name).to(self._device).eval()
             self._processor = ClapProcessor.from_pretrained(self._model_name)
             logger.info("CLAP loaded successfully")
         except Exception as e:

@@ -5,12 +5,7 @@ from typing import Any
 import click
 import scipy.io.wavfile
 
-from embedding_art.cli.utils import (
-    console, 
-    handle_exception, 
-    print_dry_run_summary, 
-    save_video
-)
+from embedding_art.cli.utils import console, handle_exception, print_dry_run_summary, save_video
 from embedding_art.cli.utils import DEFAULT_VIDEO_FPS
 
 
@@ -179,10 +174,16 @@ def optimize(
     # Merge CLI args with config file values (needed for both dry-run and real run)
     opt_config = loaded_config.get("optimization", {})
     steps = steps if steps is not None else opt_config.get("steps", 2000)
-    guidance_scale = guidance_scale if guidance_scale is not None else opt_config.get("guidance_scale", 250.0)
+    guidance_scale = (
+        guidance_scale if guidance_scale is not None else opt_config.get("guidance_scale", 250.0)
+    )
     tv_weight = tv_weight if tv_weight is not None else opt_config.get("tv_weight", 0.25)
-    spectral_weight = spectral_weight if spectral_weight is not None else opt_config.get("spectral_weight", 0.01)
-    normalize_gradients = normalize_gradients if normalize_gradients else opt_config.get("normalize_gradients", False)
+    spectral_weight = (
+        spectral_weight if spectral_weight is not None else opt_config.get("spectral_weight", 0.01)
+    )
+    normalize_gradients = (
+        normalize_gradients if normalize_gradients else opt_config.get("normalize_gradients", False)
+    )
     lr = lr if lr is not None else opt_config.get("learning_rate", 0.1)
     seed = seed if seed is not None else opt_config.get("seed")
     device = device if device is not None else loaded_config.get("device", "mps")
@@ -234,7 +235,7 @@ def optimize(
                 memory_config = MemoryConfig(track_memory=False)
             memory_config.memory_limit_mb = memory_limit
             console.print(f"[dim]Memory limit set to {memory_limit:.0f} MB[/dim]")
-        
+
         # If config has a limit (even default), we might want to enforce it if tracking?
         # But optimize() handles creation of manager if config is not None.
         # If memory_config is None, no limit is enforced (engine checks strict none).
@@ -247,7 +248,7 @@ def optimize(
         # I'll default to implicit None (no check) unless configured, but allow easy setting.
         # The user seems to imply limits *are* 24/48GB.
         # If I leave it as None, it's unlimited.
-        # I will stick to explicit enable for now to avoid regression in speed, 
+        # I will stick to explicit enable for now to avoid regression in speed,
         # unless memory_limit is passed.
 
         console.print("[bold]Loading models...[/bold]")
@@ -301,21 +302,29 @@ def optimize(
             normalize_gradients=normalize_gradients,
         )
 
-        from embedding_art.regularizers import CompositeRegularizer, TotalVariation, SpectralRegularizer, LatentNorm
+        from embedding_art.regularizers import (
+            CompositeRegularizer,
+            TotalVariation,
+            SpectralRegularizer,
+            LatentNorm,
+        )
+
         regularizers = None
         if output == "image":
-             # Use CLI provided TV weight (and hardcoded others for now)
-             regularizers = CompositeRegularizer(
+            # Use CLI provided TV weight (and hardcoded others for now)
+            regularizers = CompositeRegularizer(
                 regularizers=[
-                    TotalVariation(weight=tv_weight), 
-                    SpectralRegularizer(weight=spectral_weight), # Anti-static
-                    LatentNorm(weight=0.5),           # Latent validity
+                    TotalVariation(weight=tv_weight),
+                    SpectralRegularizer(weight=spectral_weight),  # Anti-static
+                    LatentNorm(weight=0.5),  # Latent validity
                 ]
             )
 
         if resume:
             console.print(f"[bold]Resuming from checkpoint: {resume}[/bold]")
-        console.print(f"[bold]Optimizing for {steps} steps with scale {guidance_scale}, TV {tv_weight}, Spectral {spectral_weight}...[/bold]")
+        console.print(
+            f"[bold]Optimizing for {steps} steps with scale {guidance_scale}, TV {tv_weight}, Spectral {spectral_weight}...[/bold]"
+        )
         result = engine.optimize(
             target,
             output,

@@ -246,9 +246,9 @@ class TestOptimizationLoopRunsAndImproves:
         initial_similarity = result.similarity_history[0]
         final_similarity = result.final_similarity
 
-        assert final_similarity > initial_similarity, (
-            f"Similarity should improve: {initial_similarity:.4f} -> {final_similarity:.4f}"
-        )
+        assert (
+            final_similarity > initial_similarity
+        ), f"Similarity should improve: {initial_similarity:.4f} -> {final_similarity:.4f}"
 
     @pytest.mark.slow
     def test_loss_decreases_during_optimization(self):
@@ -274,9 +274,9 @@ class TestOptimizationLoopRunsAndImproves:
         initial_loss = result.loss_history[0]
         final_loss = result.loss_history[-1]
 
-        assert final_loss < initial_loss, (
-            f"Loss should decrease: {initial_loss:.4f} -> {final_loss:.4f}"
-        )
+        assert (
+            final_loss < initial_loss
+        ), f"Loss should decrease: {initial_loss:.4f} -> {final_loss:.4f}"
 
     def test_callback_is_invoked_each_step(self):
         """Should invoke callback function at each optimization step."""

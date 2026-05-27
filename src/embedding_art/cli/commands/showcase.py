@@ -83,6 +83,8 @@ from pathlib import Path
 from typing import Any
 
 import click
+import torch
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
 
 from embedding_art.cli.utils import console, handle_exception
 
@@ -318,10 +320,16 @@ def showcase(
         device=device,
     )
 
+    import datetime
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = Path(output_dir)
+    out_path = out_path.parent / f"{out_path.name}_{timestamp}"
+
     try:
         _showcase_impl(
             target_text=target_text,
-            output_dir=Path(output_dir),
+            output_dir=out_path,
             encoder_name=encoder,
             modalities=[m.strip() for m in modalities.split(",") if m.strip()],
             steps=steps,
@@ -771,12 +779,32 @@ def _render_image(
         generator = SDXLImageGenerator(device=device)
 
     engine.register_generator("image", generator)
-    result = engine.render(
-        target,
-        encoder_name=encoder_name,
-        output_modality="image",
-        config=config,
-    )
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress_bar:
+        task_id = progress_bar.add_task("Optimising image...", total=config.steps)
+
+        def step_callback(step: int, breakdown: Any, output: torch.Tensor) -> None:
+            sim = float(breakdown.similarity) if hasattr(breakdown, "similarity") else 0.0
+            loss = float(breakdown.total) if hasattr(breakdown, "total") else 0.0
+            progress_bar.update(
+                task_id,
+                completed=step + 1,
+                description=f"Optimising image (loss={loss:.4f}, sim={sim:.4f})",
+            )
+
+        result = engine.render(
+            target,
+            encoder_name=encoder_name,
+            output_modality="image",
+            config=config,
+            callback=step_callback,
+        )
 
     image_path = output_dir / "image.png"
     _save_image_output(result, generator, image_path)
@@ -833,12 +861,32 @@ def _render_audio(
         )
 
     engine.register_generator("audio", generator)
-    result = engine.render(
-        target,
-        encoder_name=encoder_name,
-        output_modality="audio",
-        config=config,
-    )
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress_bar:
+        task_id = progress_bar.add_task(f"Optimising audio ({backbone})...", total=config.steps)
+
+        def step_callback(step: int, breakdown: Any, output: torch.Tensor) -> None:
+            sim = float(breakdown.similarity) if hasattr(breakdown, "similarity") else 0.0
+            loss = float(breakdown.total) if hasattr(breakdown, "total") else 0.0
+            progress_bar.update(
+                task_id,
+                completed=step + 1,
+                description=f"Optimising audio (loss={loss:.4f}, sim={sim:.4f})",
+            )
+
+        result = engine.render(
+            target,
+            encoder_name=encoder_name,
+            output_modality="audio",
+            config=config,
+            callback=step_callback,
+        )
 
     audio_path = output_dir / "audio.wav"
     _save_audio_output(result, generator, audio_path)
@@ -893,12 +941,32 @@ def _render_video(
         raise ValueError(f"Unknown video backbone '{backbone}'. Valid: ltx-video, svd.")
 
     engine.register_generator("video", generator)
-    result = engine.render(
-        target,
-        encoder_name=encoder_name,
-        output_modality="video",
-        config=config,
-    )
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress_bar:
+        task_id = progress_bar.add_task(f"Optimising video ({backbone})...", total=config.steps)
+
+        def step_callback(step: int, breakdown: Any, output: torch.Tensor) -> None:
+            sim = float(breakdown.similarity) if hasattr(breakdown, "similarity") else 0.0
+            loss = float(breakdown.total) if hasattr(breakdown, "total") else 0.0
+            progress_bar.update(
+                task_id,
+                completed=step + 1,
+                description=f"Optimising video (loss={loss:.4f}, sim={sim:.4f})",
+            )
+
+        result = engine.render(
+            target,
+            encoder_name=encoder_name,
+            output_modality="video",
+            config=config,
+            callback=step_callback,
+        )
 
     video_path = output_dir / "video.mp4"
     fallback_path = output_dir / "video.gif"

@@ -4,10 +4,7 @@ from pathlib import Path
 import click
 from rich.table import Table
 
-from embedding_art.cli.utils import (
-    console, 
-    handle_exception
-)
+from embedding_art.cli.utils import console, handle_exception
 
 
 def _print_grid_dry_run_1d(
@@ -158,7 +155,7 @@ def grid(
     # Get config/debug from context
     loaded_config = ctx.obj.get("config", {}) if ctx.obj else {}
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
-    
+
     # Validate inputs
     has_targets = len(target_text) > 0
     has_corners = corners is not None

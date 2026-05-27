@@ -282,9 +282,11 @@ class SigLIP2Encoder:
         captured_states: list[torch.Tensor] = []
         hooks = []
         for layer in self._model.vision_model.encoder.layers:
+
             def _hook(module, input, output, states=captured_states):
                 out = output[0] if isinstance(output, tuple) else output
                 states.append(out)
+
             hooks.append(layer.register_forward_hook(_hook))
 
         try:

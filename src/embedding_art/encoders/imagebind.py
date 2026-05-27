@@ -334,6 +334,7 @@ class ImageBindEncoder:
             try:
                 pil_img = Image.open(spec.image).convert("RGB")
                 import torchvision.transforms.functional as TF
+
                 source_tensor = TF.to_tensor(pil_img).unsqueeze(0)  # [1, 3, H, W]
             except Exception:
                 source_tensor = None

@@ -72,7 +72,11 @@ def compare(
         from embedding_art.core.config import OptimizationConfig
         from embedding_art.core.engine import EmbeddingArtEngine
         from embedding_art.encoders.defaults import create_default_registry
-        from embedding_art.generators import SDXLImageGenerator, AudioLDMGenerator, SVDVideoGenerator
+        from embedding_art.generators import (
+            SDXLImageGenerator,
+            AudioLDMGenerator,
+            SVDVideoGenerator,
+        )
 
         registry = create_default_registry()
 
@@ -106,7 +110,9 @@ def compare(
 
         config = OptimizationConfig(steps=steps)
 
-        console.print(f"[bold]Comparing {len(encoder_names)} encoder(s) for {steps} steps...[/bold]")
+        console.print(
+            f"[bold]Comparing {len(encoder_names)} encoder(s) for {steps} steps...[/bold]"
+        )
         results = engine.render_compare(
             target,
             encoder_names=encoder_names,

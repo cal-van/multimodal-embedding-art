@@ -3,10 +3,7 @@ from pathlib import Path
 
 import click
 
-from embedding_art.cli.utils import (
-    console, 
-    handle_exception
-)
+from embedding_art.cli.utils import console, handle_exception
 
 
 @click.group()
@@ -37,7 +34,9 @@ def visualize() -> None:
     help="Title for the plot",
 )
 @click.pass_context
-def similarity(ctx, checkpoint: str, output: str | None, show_loss: bool, title: str | None) -> None:
+def similarity(
+    ctx, checkpoint: str, output: str | None, show_loss: bool, title: str | None
+) -> None:
     """Plot similarity history from an optimization checkpoint."""
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
 
@@ -125,7 +124,7 @@ def embeddings(
     """Create a 2D projection of concept embeddings."""
     loaded_config = ctx.obj.get("config", {}) if ctx.obj else {}
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
-    
+
     if len(text) < 2:
         raise click.UsageError("Need at least 2 text concepts for 2D projection")
 
@@ -207,7 +206,7 @@ def distances(
     """Create a distance matrix heatmap showing pairwise similarities."""
     loaded_config = ctx.obj.get("config", {}) if ctx.obj else {}
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
-    
+
     if len(text) < 2:
         raise click.UsageError("Need at least 2 text concepts for distance matrix")
 

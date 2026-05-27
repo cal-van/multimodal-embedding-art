@@ -6,10 +6,7 @@ import click
 import yaml
 from rich.table import Table
 
-from embedding_art.cli.utils import (
-    console, 
-    handle_exception
-)
+from embedding_art.cli.utils import console, handle_exception
 
 
 def _parse_batch_file(batch_path: Path) -> list[dict[str, Any]]:
@@ -108,7 +105,7 @@ def batch(ctx, batch_file: str, device: str | None, dry_run: bool) -> None:
     """Process multiple concepts from a YAML batch file."""
     loaded_config = ctx.obj.get("config", {}) if ctx.obj else {}
     debug_mode = ctx.obj.get("debug", False) if ctx.obj else False
-    
+
     batch_path = Path(batch_file)
     jobs = _parse_batch_file(batch_path)
 

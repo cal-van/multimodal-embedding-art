@@ -20,7 +20,6 @@ from embedding_art.encoders.clap import EMBEDDING_DIM, CLAPEncoder
 from embedding_art.encoders.registry import EncoderCapability, EncoderCard
 from embedding_art.exceptions import EncoderError
 
-
 # ---------------------------------------------------------------------------
 # Static / class-level tests — no model loading required
 # ---------------------------------------------------------------------------
@@ -172,9 +171,7 @@ class TestCLAPEncoderAudio:
         embedding = encoder.encode_audio(waveform)
         assert embedding.shape == (1, EMBEDDING_DIM)
 
-    def test_encode_audio_tensor_returns_normalized_embedding(
-        self, encoder: CLAPEncoder
-    ) -> None:
+    def test_encode_audio_tensor_returns_normalized_embedding(self, encoder: CLAPEncoder) -> None:
         """Tensor audio output must be unit-normalised."""
         waveform = torch.zeros(24_000)
         embedding = encoder.encode_audio(waveform)

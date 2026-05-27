@@ -149,9 +149,9 @@ class TestEndToEndOptimization:
         initial_similarity = result.similarity_history[0]
         final_similarity = result.final_similarity
 
-        assert final_similarity > initial_similarity, (
-            f"Similarity should improve: {initial_similarity:.4f} -> {final_similarity:.4f}"
-        )
+        assert (
+            final_similarity > initial_similarity
+        ), f"Similarity should improve: {initial_similarity:.4f} -> {final_similarity:.4f}"
 
     @pytest.mark.slow
     def test_different_concepts_produce_different_results(
@@ -191,9 +191,9 @@ class TestEndToEndOptimization:
         )
 
         latent_diff = (result_a.final_latent - result_b.final_latent).abs().mean().item()
-        assert latent_diff > 0.1, (
-            f"Different concepts should produce different latents, but diff={latent_diff:.4f}"
-        )
+        assert (
+            latent_diff > 0.1
+        ), f"Different concepts should produce different latents, but diff={latent_diff:.4f}"
 
     @pytest.mark.slow
     def test_result_can_be_decoded_to_valid_image(self, real_engine, real_encoder, real_generator):

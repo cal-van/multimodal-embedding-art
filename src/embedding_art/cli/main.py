@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 Command-line interface for embedding-art.
 
@@ -5,6 +6,24 @@ Usage:
     embed-art optimize --target-text "goldfish" 1.0 --output image
     embed-art interpolate -a "goldfish" -b "flamingo" -s 10 -o image
 """
+
+import os
+import sys
+import warnings
+
+# Silence Python warnings globally
+warnings.filterwarnings("ignore")
+
+# Silence dynamic library / Objective-C runtime warnings (e.g. duplicate classes) during imports
+saved_stderr_fd = None
+try:
+    stderr_fd = sys.stderr.fileno()
+    saved_stderr_fd = os.dup(stderr_fd)
+    null_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(null_fd, stderr_fd)
+    os.close(null_fd)
+except Exception:
+    pass
 
 import click
 import yaml
@@ -31,6 +50,14 @@ from embedding_art.cli.commands.visualize import visualize
 from embedding_art.cli.commands.web import web
 from embedding_art.core.config import load_config
 
+# Restore stderr after noisy library imports are completed
+if saved_stderr_fd is not None:
+    try:
+        os.dup2(saved_stderr_fd, stderr_fd)
+        os.close(saved_stderr_fd)
+    except Exception:
+        pass
+
 
 @click.group()
 @click.version_option(version="0.1.0")
@@ -49,6 +76,10 @@ from embedding_art.core.config import load_config
 @click.pass_context
 def cli(ctx: click.Context, debug: bool, config: str | None) -> None:
     """Generate art by optimizing toward coordinates in multimodal embedding space."""
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
     # Ensure ctx.obj exists (it might be None)
     ctx.ensure_object(dict)
 
