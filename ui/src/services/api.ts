@@ -14,6 +14,8 @@ export interface Job {
   manifest_url?: string | null;
   tracks?: string[];
   modalities?: string[];
+  target_text?: string[];
+  output_modality?: string;
 }
 
 export interface ShowcaseRequest {

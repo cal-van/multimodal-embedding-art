@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Sidebar } from './Sidebar';
 
 interface LayoutProps {
@@ -7,11 +7,12 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
     return (
-        <div className="flex h-full">
+        <div className="layout-container">
             <Sidebar />
-            <main className="flex-1 p-4 overflow-auto">
+            <main className="main-content">
                 {children}
             </main>
         </div>
     );
 }
+

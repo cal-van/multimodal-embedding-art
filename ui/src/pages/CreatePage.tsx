@@ -39,9 +39,27 @@ export function CreatePage() {
                         value={target}
                         onChange={(e) => setTarget(e.target.value)}
                         placeholder="e.g. goldfish, fire + water"
-                        className="w-full bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-3 rounded-md focus:border-[#8b5cf6] focus:outline-none transition-colors"
+                        className="w-full"
                         autoFocus
                     />
+                    <div className="preset-container">
+                        {[
+                            { label: 'goldfish 🐠', value: 'goldfish' },
+                            { label: 'fire + water 🔥💧', value: 'fire + water' },
+                            { label: 'sunset 🌅', value: 'sunset' },
+                            { label: 'pine forest 🌲', value: 'pine forest' },
+                            { label: 'electricity ⚡', value: 'electricity' }
+                        ].map((p) => (
+                            <button
+                                type="button"
+                                key={p.value}
+                                onClick={() => setTarget(p.value)}
+                                className="preset-btn"
+                            >
+                                {p.label}
+                            </button>
+                        ))}
+                    </div>
                     <p className="text-xs text-dim mt-2">Enter text descriptions to guide the optimization.</p>
                 </div>
 
@@ -49,7 +67,8 @@ export function CreatePage() {
                     <label className="block text-sm text-dim mb-2">Output Modality</label>
                     <div className="relative">
                         <select
-                            className="w-full bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-3 rounded-md appearance-none focus:border-[#8b5cf6] focus:outline-none transition-colors"
+                            className="w-full appearance-none pr-8"
+                            style={{ appearance: 'none', WebkitAppearance: 'none' }}
                             id="modality"
                             name="modality"
                             value={modality}
@@ -59,7 +78,7 @@ export function CreatePage() {
                             <option value="video">Video 🎥</option>
                             <option value="audio">Audio 🎵</option>
                         </select>
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-dim">
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-dim" style={{ fontSize: '0.75rem' }}>
                             ▼
                         </div>
                     </div>
@@ -69,8 +88,8 @@ export function CreatePage() {
                     <button
                         type="submit"
                         className={`px-6 py-2 rounded-lg font-medium transition-all ${isValid && !loading
-                                ? 'bg-[#8b5cf6] hover:bg-[#7c3aed] text-white shadow-[0_0_15px_rgba(139,92,246,0.5)]'
-                                : 'bg-[#27272a] text-dim cursor-not-allowed'
+                                ? 'primary'
+                                : 'cursor-not-allowed'
                             }`}
                         disabled={!isValid || loading}
                     >

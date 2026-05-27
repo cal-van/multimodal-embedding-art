@@ -236,14 +236,34 @@ export function JobPage() {
                         ))}
                     </div>
 
-                    <div className="card flex items-center justify-center text-dim bg-black/20 overflow-hidden relative">
+                    <div className="card flex items-center justify-center text-dim bg-black/20 overflow-hidden relative min-h-[300px]">
                         {job.result_url ? (
-                            <div className="relative w-full h-full flex items-center justify-center">
-                                <img
-                                    src={`http://127.0.0.1:8000${job.result_url}`}
-                                    alt="Optimization Result"
-                                    className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
-                                />
+                            <div className="relative w-full h-full flex flex-col items-center justify-center p-4">
+                                {job.output_modality === 'audio' || job.result_url.endsWith('.wav') ? (
+                                    <div className="flex flex-col items-center gap-4 w-full max-w-md p-6 bg-black/30 rounded-xl backdrop-blur-md border border-white/5 shadow-2xl">
+                                        <div className="text-violet-400 text-4xl">🎵</div>
+                                        <div className="text-sm font-semibold tracking-wide text-white">Audio Result</div>
+                                        <audio
+                                            src={`http://127.0.0.1:8000${job.result_url}`}
+                                            controls
+                                            className="w-full mt-2"
+                                        />
+                                    </div>
+                                ) : job.output_modality === 'video' || job.result_url.endsWith('.mp4') || job.result_url.endsWith('.gif') ? (
+                                    <video
+                                        src={`http://127.0.0.1:8000${job.result_url}`}
+                                        controls
+                                        autoPlay
+                                        loop
+                                        className="max-w-full max-h-[400px] object-contain rounded-lg shadow-lg border border-white/5"
+                                    />
+                                ) : (
+                                    <img
+                                        src={`http://127.0.0.1:8000${job.result_url}`}
+                                        alt="Optimization Result"
+                                        className="max-w-full max-h-[400px] object-contain rounded-lg shadow-lg"
+                                    />
+                                )}
                                 <a
                                     href={`http://127.0.0.1:8000${job.result_url}`}
                                     target="_blank"
@@ -255,8 +275,9 @@ export function JobPage() {
                             </div>
                         ) : (
                             <div className="flex flex-col items-center gap-2">
-                                <div className="animate-pulse">
-                                    Waiting for result…
+                                <div className="animate-pulse flex flex-col items-center gap-3">
+                                    <div className="w-8 h-8 border-4 border-violet-500 border-t-transparent rounded-full animate-spin"></div>
+                                    <span>Waiting for result…</span>
                                 </div>
                             </div>
                         )}

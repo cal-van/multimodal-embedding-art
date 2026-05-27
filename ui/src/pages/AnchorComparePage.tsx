@@ -403,20 +403,27 @@ function AnchorReadoutCard({
     anchors: Array<{ word: string; similarity: number }>;
 }) {
     return (
-        <div className="card flex flex-col gap-2">
+        <div className="card flex flex-col gap-3">
             <div>
-                <div className="text-sm font-bold">{title}</div>
+                <div className="text-sm font-bold text-white">{title}</div>
                 <div className="text-xs text-dim font-mono">{subtitle}</div>
             </div>
             {anchors.length > 0 ? (
-                <ul className="text-xs text-dim font-mono space-y-1">
-                    {anchors.map((a) => (
-                        <li key={a.word} className="flex justify-between">
-                            <span>{a.word}</span>
-                            <span>{a.similarity.toFixed(3)}</span>
-                        </li>
-                    ))}
-                </ul>
+                <div className="flex flex-col gap-1.5 mt-1">
+                    {anchors.map((a) => {
+                        const pct = Math.max(0, Math.min(100, a.similarity * 100));
+                        return (
+                            <div key={a.word} className="relative flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono overflow-hidden bg-white/5 border border-white/5 group hover:border-violet-500/30 transition-all w-full">
+                                <div 
+                                    className="absolute left-0 top-0 bottom-0 bg-violet-600/10 group-hover:bg-violet-600/20 transition-all"
+                                    style={{ width: `${pct}%` }}
+                                />
+                                <span className="relative text-white/90 font-medium">{a.word}</span>
+                                <span className="relative text-violet-400 font-bold">{a.similarity.toFixed(3)}</span>
+                            </div>
+                        );
+                    })}
+                </div>
             ) : (
                 <div className="text-xs text-dim">No anchor words available.</div>
             )}

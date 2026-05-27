@@ -347,6 +347,22 @@ function EvaluationCard({ evaluation }: { evaluation: Record<string, unknown> })
     );
 }
 
+function jaccardHeatColor(v: number): string {
+    const clamped = Math.max(0, Math.min(1, v));
+    const alpha = Math.round(clamped * 0.7 * 255);
+    return `rgba(139, 92, 246, ${alpha / 255})`;
+}
+
+function cosineHeatColor(v: number): string {
+    const clamped = Math.max(-1, Math.min(1, v));
+    if (clamped >= 0) {
+        const alpha = Math.round(clamped * 0.7 * 255);
+        return `rgba(139, 92, 246, ${alpha / 255})`;
+    }
+    const alpha = Math.round(-clamped * 0.4 * 255);
+    return `rgba(59, 130, 246, ${alpha / 255})`;
+}
+
 function SimilarityMatrix({
     title,
     matrix,
@@ -359,35 +375,43 @@ function SimilarityMatrix({
         new Set(rowKeys.flatMap((r) => Object.keys(matrix[r] ?? {}))),
     ).sort();
     return (
-        <div>
-            <div className="text-xs uppercase tracking-wide text-dim mb-1">{title}</div>
-            <table className="text-xs font-mono">
-                <thead>
-                    <tr>
-                        <th></th>
-                        {colKeys.map((c) => (
-                            <th key={c} className="px-2 text-left">
-                                {c}
-                            </th>
-                        ))}
-                    </tr>
-                </thead>
-                <tbody>
-                    {rowKeys.map((r) => (
-                        <tr key={r}>
-                            <td className="pr-2 font-bold">{r}</td>
-                            {colKeys.map((c) => {
-                                const v = matrix[r]?.[c];
-                                return (
-                                    <td key={c} className="px-2">
-                                        {v === undefined ? '—' : v.toFixed(3)}
-                                    </td>
-                                );
-                            })}
+        <div className="flex flex-col gap-2 mt-2">
+            <div className="text-xs uppercase tracking-wide text-dim font-bold">{title}</div>
+            <div className="overflow-x-auto border border-white/5 rounded-lg bg-black/10 p-3">
+                <table className="w-full text-xs font-mono border-collapse">
+                    <thead>
+                        <tr>
+                            <th className="p-2 text-left text-dim font-normal"></th>
+                            {colKeys.map((c) => (
+                                <th key={c} className="p-2 text-center text-dim font-normal">
+                                    {c}
+                                </th>
+                            ))}
                         </tr>
-                    ))}
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        {rowKeys.map((r) => (
+                            <tr key={r}>
+                                <th className="p-2 text-left text-dim font-normal border-t border-white/5">{r}</th>
+                                {colKeys.map((c) => {
+                                    const v = matrix[r]?.[c];
+                                    const bg = v !== undefined ? jaccardHeatColor(v) : 'transparent';
+                                    return (
+                                        <td
+                                            key={c}
+                                            className="p-2 text-center border border-white/5 transition-all hover:brightness-110"
+                                            style={{ backgroundColor: bg }}
+                                            title={`${r} ↔ ${c}: ${v !== undefined ? v.toFixed(3) : 'N/A'}`}
+                                        >
+                                            {v === undefined ? '—' : v.toFixed(3)}
+                                        </td>
+                                    );
+                                })}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }
@@ -402,32 +426,40 @@ function ProbeTable({
         new Set(modalities.flatMap((m) => Object.keys(table[m] ?? {}))),
     ).sort();
     return (
-        <table className="text-xs font-mono">
-            <thead>
-                <tr>
-                    <th></th>
-                    {probeNames.map((p) => (
-                        <th key={p} className="px-2 text-left">
-                            {p}
-                        </th>
-                    ))}
-                </tr>
-            </thead>
-            <tbody>
-                {modalities.map((m) => (
-                    <tr key={m}>
-                        <td className="pr-2 font-bold">{m}</td>
-                        {probeNames.map((p) => {
-                            const v = table[m]?.[p];
-                            return (
-                                <td key={p} className="px-2">
-                                    {v === undefined || v === null ? '—' : v.toFixed(3)}
-                                </td>
-                            );
-                        })}
+        <div className="overflow-x-auto border border-white/5 rounded-lg bg-black/10 p-3 mt-2">
+            <table className="w-full text-xs font-mono border-collapse">
+                <thead>
+                    <tr>
+                        <th className="p-2 text-left text-dim font-normal"></th>
+                        {probeNames.map((p) => (
+                            <th key={p} className="p-2 text-center text-dim font-normal">
+                                {p}
+                            </th>
+                        ))}
                     </tr>
-                ))}
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    {modalities.map((m) => (
+                        <tr key={m}>
+                            <th className="p-2 text-left text-dim font-normal border-t border-white/5">{m}</th>
+                            {probeNames.map((p) => {
+                                const v = table[m]?.[p];
+                                const bg = v !== undefined && v !== null ? cosineHeatColor(v) : 'transparent';
+                                return (
+                                    <td
+                                        key={p}
+                                        className="p-2 text-center border border-white/5 transition-all hover:brightness-110"
+                                        style={{ backgroundColor: bg }}
+                                        title={`${m} ↔ ${p}: ${v !== undefined && v !== null ? v.toFixed(3) : 'N/A'}`}
+                                    >
+                                        {v === undefined || v === null ? '—' : v.toFixed(3)}
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
     );
 }

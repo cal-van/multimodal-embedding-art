@@ -79,6 +79,9 @@ class JobResponse(BaseModel):
     manifest_url: str | None = None
     tracks: list[str] = []
     modalities: list[str] = []
+    target_text: list[str] = []
+    output_modality: str = "image"
+
 
 
 @router.post("/", response_model=JobResponse)
@@ -205,4 +208,6 @@ def _map_job_to_response(job: Job) -> JobResponse:
         manifest_url=job.manifest_path,
         tracks=job.tracks if job.kind == "showcase" else [],
         modalities=job.modalities if job.kind == "showcase" else [],
+        target_text=job.target_text,
+        output_modality=job.output_modality,
     )
