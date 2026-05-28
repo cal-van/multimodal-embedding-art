@@ -425,3 +425,34 @@ class TestActiveFeatures:
             idx = sae._vocab_to_idx[name]
             if float(decomp.activations[0, idx].item()) == 0.0:
                 assert name not in decomp.active_features
+
+
+class TestFeatureDirection:
+    """Tests for SAELens.feature_direction() public method."""
+
+    def test_returns_correct_shape(self, sae: SAELens) -> None:
+        direction = sae.feature_direction(0)
+        assert direction.shape == (1, sae.embed_dim)
+
+    def test_matches_decoder_column(self, sae: SAELens) -> None:
+        for idx in [0, 5, sae.n_features - 1]:
+            direction = sae.feature_direction(idx)
+            expected = sae._W_dec[:, idx].unsqueeze(0)
+            assert torch.allclose(direction, expected)
+
+    def test_different_features_different_directions(self, sae: SAELens) -> None:
+        d0 = sae.feature_direction(0)
+        d1 = sae.feature_direction(1)
+        assert not torch.allclose(d0, d1)
+
+
+class TestFeatureIndex:
+    """Tests for SAELens.feature_index() public method."""
+
+    def test_returns_correct_index(self, sae: SAELens) -> None:
+        for i, name in enumerate(sae.vocab):
+            assert sae.feature_index(name) == i
+
+    def test_unknown_name_raises(self, sae: SAELens) -> None:
+        with pytest.raises(FeatureNotFoundError):
+            sae.feature_index("nonexistent_feature")
