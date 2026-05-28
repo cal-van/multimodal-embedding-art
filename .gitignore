@@ -49,7 +49,8 @@ outputs/**
 *.pt
 *.pth
 *.partial
-!*.pt  # Allow saved embeddings
+# Allow intentionally-saved embedding tensors under embeddings/
+!embeddings/*.pt
 
 # OS
 .DS_Store
@@ -60,16 +61,20 @@ Thumbs.db
 .coverage
 htmlcov/
 
-# Beads
-.beads/beads.db
-.beads/*.log
-.beads/dolt/
-.beads/dolt-server.*
+# Beads issue tracker (local-only; not part of the public project)
+.beads/
+.dolt/
+*.db
+.beads-credential-key
 
 # External Dependencies
 ImageBind/
 
-# Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key
+# Internal / working docs (kept locally, not published)
+AGENTS.md
+CLAUDE.local.md
+CODE_REVIEW.md
+PROJECT.md
+docs/superpowers/
+test_output.txt
+debug_imagebind.py

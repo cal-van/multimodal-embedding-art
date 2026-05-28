@@ -5,9 +5,9 @@ CLI utility functions.
 from pathlib import Path
 
 import click
+from PIL import Image
 from rich.console import Console
 from rich.table import Table
-from PIL import Image
 
 console = Console()
 DEFAULT_VIDEO_FPS = 8

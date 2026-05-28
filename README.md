@@ -1,5 +1,9 @@
 # Embedding Art
 
+[![CI](https://github.com/cal-van/multimodal-embedding-art/actions/workflows/ci.yml/badge.svg)](https://github.com/cal-van/multimodal-embedding-art/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 Generate art by optimising toward coordinates in a shared multimodal embedding space.
 
 This system extracts the "platonic ideals" that live inside neural networks — not "generate me a goldfish" but "show me the direction in representation space that means goldfish, across every modality, cranked to maximum."
@@ -77,6 +81,21 @@ ImageBind is **deprecated in v3** but kept for back-compat with old artefacts:
 git clone https://github.com/facebookresearch/ImageBind
 cd ImageBind && pip install -e . && cd ..
 ```
+
+## Examples
+
+Runnable recipes for the main workflows live in [`examples/`](examples/). Each
+starts with a fast smoke variant so you can verify your install before a long
+run:
+
+```bash
+bash examples/01_showcase.sh        # one concept → all four modalities
+python examples/02_concept_algebra.py  # add / subtract / interpolate concepts
+bash examples/03_anchor_compare.sh  # cross-modal embedding agreement
+bash examples/04_interpolate.sh     # render a morph between two concepts
+```
+
+See [`examples/README.md`](examples/README.md) for details and runtime costs.
 
 ## Headline command: `embed-art showcase`
 
@@ -215,7 +234,7 @@ embedding-art/
 │   ├── web/              # FastAPI surface for the showcase + anchor-compare endpoints
 │   └── cli/              # `embed-art` commands
 ├── ui/                   # React + TS frontend (Showcase, Anchor-Compare, Job pages)
-├── docs/superpowers/     # Resolved-decisions doc, runbooks, results
+├── examples/             # Runnable recipes for the main workflows
 └── outputs/              # Generated outputs
 ```
 

@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Cal"}
+    {name = "Callum van den Enden"}
 ]
 
 dependencies = [
@@ -33,6 +33,11 @@ dependencies = [
     "websockets>=12.0",
     "python-multipart>=0.0.9",
 ]
+
+[project.urls]
+Homepage = "https://github.com/cal-van/multimodal-embedding-art"
+Repository = "https://github.com/cal-van/multimodal-embedding-art"
+Issues = "https://github.com/cal-van/multimodal-embedding-art/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -84,8 +89,17 @@ target-version = ["py310"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]
+ignore = [
+    "E501",  # line length handled by black
+    # Idiomatic ML naming: `import torch.nn.functional as F`, tensor-dim locals
+    # like `B, N, D = x.shape`, and matrix args like `W_enc`.
+    "N803",  # argument name should be lowercase
+    "N806",  # variable in function should be lowercase
+    "N812",  # lowercase imported as non-lowercase
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

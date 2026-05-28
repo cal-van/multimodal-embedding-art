@@ -1,7 +1,8 @@
 import asyncio
+import json
+
 import httpx
 import websockets
-import json
 
 
 async def test_websocket():

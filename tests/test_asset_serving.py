@@ -1,6 +1,6 @@
-import httpx
 import os
-import shutil
+
+import httpx
 
 OUTPUTS_DIR = os.path.join(os.getcwd(), "outputs")
 os.makedirs(OUTPUTS_DIR, exist_ok=True)

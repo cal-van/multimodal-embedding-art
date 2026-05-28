@@ -351,8 +351,6 @@ class TestLearningRateTracking:
         target = Concept(embedding=torch.randn(1, 128))
         config = OptimizationConfig(steps=5, scheduler="cosine")
 
-        lr_values = []
-
         def capture_lr(step: int, loss: float, sim: float, latent: torch.Tensor) -> None:
             pass
 

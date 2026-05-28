@@ -1,4 +1,3 @@
-from typing import Dict, List
 from fastapi import WebSocket
 
 
@@ -7,7 +6,7 @@ class ConnectionManager:
 
     def __init__(self):
         # Map job_id to list of active websockets
-        self.active_connections: Dict[str, List[WebSocket]] = {}
+        self.active_connections: dict[str, list[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, job_id: str):
         await websocket.accept()

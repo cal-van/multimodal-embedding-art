@@ -6,6 +6,8 @@ Follows TDD red-green-refactor: tests written first, implementation follows.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 import torch
 import torch.nn.functional as F

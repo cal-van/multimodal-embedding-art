@@ -6,7 +6,6 @@ TDD red phase: structural/option tests — no real optimization is run.
 
 from __future__ import annotations
 
-import pytest
 from click.testing import CliRunner
 
 

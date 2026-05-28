@@ -83,7 +83,6 @@ class JobResponse(BaseModel):
     output_modality: str = "image"
 
 
-
 @router.post("/", response_model=JobResponse)
 async def create_job(request: CreateJobRequest) -> JobResponse:
     """Create a new optimization job."""

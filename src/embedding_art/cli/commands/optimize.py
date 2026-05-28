@@ -1,12 +1,16 @@
 import sys
 from pathlib import Path
-from typing import Any
 
 import click
 import scipy.io.wavfile
 
-from embedding_art.cli.utils import console, handle_exception, print_dry_run_summary, save_video
-from embedding_art.cli.utils import DEFAULT_VIDEO_FPS
+from embedding_art.cli.utils import (
+    DEFAULT_VIDEO_FPS,
+    console,
+    handle_exception,
+    print_dry_run_summary,
+    save_video,
+)
 
 
 @click.command()
@@ -304,9 +308,9 @@ def optimize(
 
         from embedding_art.regularizers import (
             CompositeRegularizer,
-            TotalVariation,
-            SpectralRegularizer,
             LatentNorm,
+            SpectralRegularizer,
+            TotalVariation,
         )
 
         regularizers = None

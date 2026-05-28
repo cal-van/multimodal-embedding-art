@@ -42,6 +42,7 @@ def similarity(
 
     try:
         import torch
+
         from embedding_art.visualization import plot_similarity_history
 
         # Load checkpoint

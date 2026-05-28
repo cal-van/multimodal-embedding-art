@@ -55,11 +55,6 @@ embed-art profile --encoder languagebind --output traces/
 # Legacy v2 single-modality pipeline. Kept for back-compat only — slow on MPS (no autocast, no compile)
 # and superseded by `showcase`. Do not use for new work.
 embed-art optimize -t "goldfish" 1.0 -o image
-
-# Beads issue tracking
-bd ls                    # List issues
-bd add "Issue title"     # Create issue
-bd show <id>             # View issue details
 ```
 
 ## Architecture

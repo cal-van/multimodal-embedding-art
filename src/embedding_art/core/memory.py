@@ -12,6 +12,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+
 from embedding_art.exceptions import OutOfMemoryError
 
 DEFAULT_MEMORY_LIMIT_MB = 48 * 1024  # 48GB default limit

@@ -1,16 +1,18 @@
-import torch
-import torch.nn.functional as F
 import gc
 import logging
-from diffusers import StableDiffusionXLPipeline
-import PIL.Image
+from collections.abc import Callable
 
 # Type checking imports
-from typing import TYPE_CHECKING, List, Optional, Union, Callable, Any
+from typing import TYPE_CHECKING, Any, Optional
+
+import PIL.Image
+import torch
+import torch.nn.functional as F
+from diffusers import StableDiffusionXLPipeline
 
 # Conditional import to avoid runtime circular dependency if not needed immediately
 try:
-    from embedding_art.encoders.imagebind import ModalityType, ImageBindEncoder
+    from embedding_art.encoders.imagebind import ImageBindEncoder, ModalityType
 except ImportError:
     ModalityType = Any  # Fallback if ImageBind not available
     ImageBindEncoder = Any
@@ -77,15 +79,15 @@ class SDXLDiffusionGenerator:
 
     def generate(
         self,
-        prompt: Union[str, List[str]],
-        negative_prompt: Optional[str] = None,
+        prompt: str | list[str],
+        negative_prompt: str | None = None,
         num_inference_steps: int = DEFAULT_INFERENCE_STEPS,
         guidance_scale: float = DEFAULT_GUIDANCE_SCALE,  # Text CFG
         imagebind_encoder: Optional["ImageBindEncoder"] = None,
-        target_embedding: Optional[torch.Tensor] = None,
+        target_embedding: torch.Tensor | None = None,
         imagebind_guidance_scale: float = 0.0,  # How much to force ImageBind concept
-        regularizers: Optional[Any] = None,  # Regularizers
-        callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
+        regularizers: Any | None = None,  # Regularizers
+        callback: Callable[[int, int, torch.Tensor], None] | None = None,
         normalize_gradients: bool = False,
         **kwargs,
     ) -> PIL.Image.Image:

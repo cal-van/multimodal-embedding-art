@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff + black)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lint tools
+        run: pip install "black==26.1.0" "ruff==0.14.14"
+      - name: ruff
+        run: ruff check src/ tests/
+      - name: black --check
+        run: black --check --line-length 100 src/ tests/
+
+  test:
+    name: Unit tests (fast)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install package (CPU torch, no model weights)
+        run: |
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+      - name: Run fast test suite
+        # Slow tests need real multi-GB model weights and MPS — neither is
+        # available in headless CI. They run locally on Apple Silicon via `-m slow`.
+        run: pytest -m "not slow"

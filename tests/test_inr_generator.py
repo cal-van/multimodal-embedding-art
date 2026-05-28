@@ -7,9 +7,13 @@ They define the full contract for FourierFeatureNetwork and INRGenerator.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn.functional as F
-import pytest
+
+if TYPE_CHECKING:
+    from embedding_art.generators.inr import INRGenerator
 
 # ---------------------------------------------------------------------------
 # FourierFeatureNetwork tests
@@ -96,7 +100,7 @@ class TestFourierFeatureNetwork:
 class TestINRGeneratorProtocol:
     """INRGenerator must satisfy the DirectGenerator protocol."""
 
-    def _make_generator(self, height: int = 16, width: int = 16) -> "INRGenerator":
+    def _make_generator(self, height: int = 16, width: int = 16) -> INRGenerator:
         from embedding_art.generators.inr import INRGenerator
 
         return INRGenerator(
@@ -166,7 +170,6 @@ class TestINRGeneratorProtocol:
 
     def test_satisfies_direct_generator_protocol(self):
         """Runtime check: INRGenerator satisfies the DirectGenerator Protocol."""
-        from embedding_art.generators.base import DirectGenerator
         from embedding_art.generators.inr import INRGenerator
 
         gen = INRGenerator(height=8, width=8, hidden_dim=4, n_layers=2, n_frequencies=2)
@@ -241,10 +244,10 @@ class TestINRWithOptimizationStrategy:
 
     def test_three_step_optimization_runs_without_error(self):
         """OptimizationStrategy.render() completes 3 steps with INRGenerator."""
-        from embedding_art.generators.inr import INRGenerator
-        from embedding_art.core.strategies import OptimizationStrategy
         from embedding_art.core.concept import Concept
         from embedding_art.core.config import LossConfig, OptimizationConfig
+        from embedding_art.core.strategies import OptimizationStrategy
+        from embedding_art.generators.inr import INRGenerator
 
         embedding_dim = 8
         encoder = DifferentiableEncoder(embedding_dim=embedding_dim)
@@ -276,10 +279,10 @@ class TestINRWithOptimizationStrategy:
 
     def test_optimization_records_history(self):
         """OptimizationHistory has entries after the loop runs."""
-        from embedding_art.generators.inr import INRGenerator
-        from embedding_art.core.strategies import OptimizationStrategy
         from embedding_art.core.concept import Concept
         from embedding_art.core.config import LossConfig, OptimizationConfig
+        from embedding_art.core.strategies import OptimizationStrategy
+        from embedding_art.generators.inr import INRGenerator
 
         embedding_dim = 8
         encoder = DifferentiableEncoder(embedding_dim=embedding_dim)
@@ -307,10 +310,10 @@ class TestINRWithOptimizationStrategy:
 
     def test_parameters_change_after_optimization(self):
         """Network weights are updated after 3 gradient steps."""
-        from embedding_art.generators.inr import INRGenerator
-        from embedding_art.core.strategies import OptimizationStrategy
         from embedding_art.core.concept import Concept
         from embedding_art.core.config import LossConfig, OptimizationConfig
+        from embedding_art.core.strategies import OptimizationStrategy
+        from embedding_art.generators.inr import INRGenerator
 
         embedding_dim = 8
         encoder = DifferentiableEncoder(embedding_dim=embedding_dim)

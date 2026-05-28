@@ -1,4 +1,0 @@
-{"id":"int-8e21b552","kind":"field_change","created_at":"2026-05-27T03:22:53.2185Z","actor":"Callum van den Enden","issue_id":"multimodal-embedding-art-0ll","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
-{"id":"int-71da044b","kind":"field_change","created_at":"2026-05-27T03:27:55.318868Z","actor":"Callum van den Enden","issue_id":"multimodal-embedding-art-0ll","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
-{"id":"int-821b4145","kind":"field_change","created_at":"2026-05-27T04:31:02.229023Z","actor":"Callum van den Enden","issue_id":"multimodal-embedding-art-m2v","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
-{"id":"int-544371de","kind":"field_change","created_at":"2026-05-27T04:39:25.003668Z","actor":"Callum van den Enden","issue_id":"multimodal-embedding-art-m2v","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}

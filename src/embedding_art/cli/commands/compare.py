@@ -73,8 +73,8 @@ def compare(
         from embedding_art.core.engine import EmbeddingArtEngine
         from embedding_art.encoders.defaults import create_default_registry
         from embedding_art.generators import (
-            SDXLImageGenerator,
             AudioLDMGenerator,
+            SDXLImageGenerator,
             SVDVideoGenerator,
         )
 

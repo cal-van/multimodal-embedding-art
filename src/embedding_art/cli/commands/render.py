@@ -112,13 +112,12 @@ def render(
 
     try:
         from embedding_art.core.concept import Concept
-        from embedding_art.core.concept_spec import ConceptSpec
         from embedding_art.core.config import LossConfig, OptimizationConfig
         from embedding_art.core.engine import EmbeddingArtEngine
         from embedding_art.encoders.defaults import create_default_registry
         from embedding_art.generators import (
-            SDXLImageGenerator,
             AudioLDMGenerator,
+            SDXLImageGenerator,
             SVDVideoGenerator,
         )
 

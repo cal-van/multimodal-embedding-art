@@ -174,7 +174,7 @@ class TestConceptFromFeatures:
         """
         c = Concept.from_features(sae, {})
         # Should not raise; just verify it returns a valid, normalised Concept.
-        norm = c.embedding.norm().item()
+        c.embedding.norm().item()
         # pre_bias is all-zeros for _make_sae, so the result could be near-zero
         # before normalisation — F.normalize handles this gracefully (returns zeros).
         # Either way, the output is a valid tensor.
@@ -219,7 +219,6 @@ class TestConceptFromFeatures:
         decomp = c.decompose(sae)
         # At least one of the original feature names should be active.
         active_names = set(decomp.active_features.keys())
-        original_names = set(features.keys())
         # It's possible (with random weights) that none overlap, so we only
         # check that the decomposition is valid rather than demanding overlap.
         assert len(active_names) == K

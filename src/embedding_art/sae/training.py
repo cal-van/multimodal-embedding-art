@@ -837,8 +837,7 @@ def label_features(
 
     state = torch.load(weights_file, weights_only=True)
 
-    # Recover embed_dim and n_features from W_enc shape.
-    W_enc = state["W_enc"]  # [n_features, embed_dim]
+    # Recover n_features from W_dec shape.
     W_dec = state["W_dec"]  # [embed_dim, n_features]
     n_features = W_dec.shape[1]
 
