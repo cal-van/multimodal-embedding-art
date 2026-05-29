@@ -55,8 +55,8 @@ def empty_mps_cache() -> None:
 def compile_module(
     module: Any,
     *,
-    mode: str = "reduce-overhead",
-    dynamic: bool = True,
+    mode: str = "default",
+    dynamic: bool = False,
     fullgraph: bool = False,
 ) -> Any:
     """Wrap ``module`` with :func:`torch.compile` if safe.
@@ -81,6 +81,13 @@ def compile_module(
     if not hasattr(torch, "compile"):
         logger.info("torch.compile unavailable; returning module as-is")
         return module
+    # reduce-overhead / max-autotune are CUDA-graph / Triton-autotuning modes
+    # that are inert (or pure overhead) on MPS — there are no CUDA graphs and no
+    # Triton backend on Apple Silicon. Downgrade to "default" so we don't pay
+    # tracing cost for a payoff that can't materialise.
+    if mode in ("reduce-overhead", "max-autotune") and mps_available():
+        logger.info("torch.compile mode %r is CUDA-only; using 'default' on MPS", mode)
+        mode = "default"
     try:
         return torch.compile(module, mode=mode, dynamic=dynamic, fullgraph=fullgraph)
     except Exception as exc:  # pragma: no cover - depends on PyTorch internals

@@ -97,6 +97,7 @@ class OptimizationStrategy:
         callback: Callable[[int, Any, torch.Tensor], None] | None = None,
         checkpoint_dir: str | Path | None = None,
         resume_from: str | Path | None = None,
+        output_modality: str = "image",
     ) -> RenderResult:
         """Run the optimization loop and return the final result.
 
@@ -117,7 +118,7 @@ class OptimizationStrategy:
         Returns:
             RenderResult with final output and full history.
         """
-        loss_fn = CompositeLoss(config.loss, encoder, sae=self.sae)
+        loss_fn = CompositeLoss(config.loss, encoder, sae=self.sae, modality=output_modality)
         loss_fn.calibrate(target, encoder)
 
         # Apple Silicon perf: optionally wrap the loss callable in

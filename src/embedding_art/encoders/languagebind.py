@@ -631,6 +631,29 @@ class LanguageBindEncoder:
         projected = model.visual_projection(pooled)
         return F.normalize(projected, dim=-1)
 
+    def encode_audio_for_optimization(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Differentiable audio encoding for gradient-descent loops.
+
+        NOT YET IMPLEMENTED. LanguageBind's audio tower consumes a
+        mel-spectrogram "image" produced by its processor with specific
+        params (sample rate, n_mels, target length, per-channel
+        normalisation). A correct differentiable path must replicate that
+        transform exactly; an approximate one would silently score audio
+        against a mis-preprocessed input — the very class of bug this method
+        exists to prevent. Until a validated path lands (tracked separately),
+        we fail LOUD rather than silently mis-encode audio through the image
+        ViT.
+        """
+        raise EncoderError(
+            "audio",
+            NotImplementedError(
+                "Differentiable audio optimisation is not yet implemented for "
+                "LanguageBind. Audio showcase rendering is unavailable until a "
+                "validated waveform->mel path lands. Render image/video/text "
+                "modalities, or use the audio encoder for embedding (path input) only."
+            ),
+        )
+
     def encode_text_for_optimization(
         self, token_ids: torch.Tensor, attention_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
@@ -730,29 +753,37 @@ class LanguageBindEncoder:
     def encode(self, spec: ConceptSpec) -> Concept:
         """Encode a :class:`ConceptSpec` to a :class:`Concept`.
 
-        Dispatches on ``spec.modality`` to the appropriate ``encode_<modality>``.
-        Lazy-loads the per-modality LanguageBind checkpoint on first use.
+        Dispatches on whichever modality field is populated (``ConceptSpec`` is a
+        frozen dataclass with optional ``text``/``image``/``audio``/``video``
+        fields — there is no ``modality``/``value`` attribute). Lazy-loads the
+        per-modality LanguageBind checkpoint on first use.
         """
         from embedding_art.core.concept import Concept
 
-        modality = spec.modality
-        if modality == "text":
-            emb = self.encode_text(spec.value)
-        elif modality == "image":
-            emb = self.encode_image(spec.value)
-        elif modality == "audio":
-            emb = self.encode_audio(Path(spec.value))
-        elif modality == "video":
-            emb = self.encode_video(Path(spec.value))
-        else:
-            raise EncoderError(
-                modality,
-                ValueError(
-                    f"Unsupported modality {modality!r}; LanguageBind supports "
-                    "text / image / audio / video."
-                ),
+        if spec.text is not None:
+            return Concept(embedding=self.encode_text(spec.text), description=f'text:"{spec.text}"')
+        if spec.image is not None:
+            return Concept(
+                embedding=self.encode_image(spec.image),
+                description=f"image:{Path(spec.image).name}",
             )
-        return Concept(embedding=emb, description=str(spec.value))
+        if spec.audio is not None:
+            return Concept(
+                embedding=self.encode_audio(Path(spec.audio)),
+                description=f"audio:{Path(spec.audio).name}",
+            )
+        if spec.video is not None:
+            return Concept(
+                embedding=self.encode_video(Path(spec.video)),
+                description=f"video:{Path(spec.video).name}",
+            )
+        raise EncoderError(
+            "unknown",
+            ValueError(
+                "ConceptSpec has no modality field set — provide one of "
+                "text / image / audio / video."
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Apple Silicon perf

@@ -14,6 +14,7 @@ import torch.nn.functional as F
 
 from embedding_art.core.concept import Concept
 from embedding_art.core.config import LossConfig
+from embedding_art.core.loss import CompositeLoss
 from embedding_art.core.render_result import LossBreakdown
 from embedding_art.encoders.features import LayerFeatures
 from embedding_art.encoders.registry import EncoderCapability, EncoderCard
@@ -401,3 +402,75 @@ def test_text_anchor_loss_silent_when_no_text_available(mock_encoder):
     current_output = torch.randn(1, 3, 64, 64)
     breakdown = loss_fn(current_output, target, mock_encoder)
     assert "text_anchor" not in breakdown.components
+
+
+# ---------------------------------------------------------------------------
+# Modality dispatch (P0 correctness: audio/video must NOT use the image encoder)
+# ---------------------------------------------------------------------------
+
+
+class TestModalityDispatch:
+    """CompositeLoss._encode must call the modality-correct encode method."""
+
+    @staticmethod
+    def _encoder_with_all_methods() -> MagicMock:
+        enc = MagicMock(spec=[])  # no auto-attrs; we add explicitly
+        emb = F.normalize(torch.randn(1, 8), dim=-1)
+        enc.encode_for_optimization = MagicMock(return_value=emb)
+        enc.encode_video_for_optimization = MagicMock(return_value=emb)
+        enc.encode_audio_for_optimization = MagicMock(return_value=emb)
+        return enc
+
+    def test_image_modality_uses_image_encode(self) -> None:
+        enc = self._encoder_with_all_methods()
+        loss = CompositeLoss(LossConfig(feature_matching_weight=0.0), enc, modality="image")
+        loss(torch.randn(1, 3, 8, 8), _make_concept(dim=8), enc)
+        enc.encode_for_optimization.assert_called_once()
+        enc.encode_video_for_optimization.assert_not_called()
+        enc.encode_audio_for_optimization.assert_not_called()
+
+    def test_video_modality_uses_video_encode(self) -> None:
+        enc = self._encoder_with_all_methods()
+        loss = CompositeLoss(LossConfig(feature_matching_weight=0.0), enc, modality="video")
+        loss(torch.randn(1, 2, 3, 8, 8), _make_concept(dim=8), enc)
+        enc.encode_video_for_optimization.assert_called_once()
+        enc.encode_for_optimization.assert_not_called()
+
+    def test_audio_modality_uses_audio_encode(self) -> None:
+        enc = self._encoder_with_all_methods()
+        loss = CompositeLoss(LossConfig(feature_matching_weight=0.0), enc, modality="audio")
+        loss(torch.randn(1, 1, 16000), _make_concept(dim=8), enc)
+        enc.encode_audio_for_optimization.assert_called_once()
+        enc.encode_for_optimization.assert_not_called()
+
+    def test_default_modality_is_image(self) -> None:
+        enc = self._encoder_with_all_methods()
+        loss = CompositeLoss(LossConfig(feature_matching_weight=0.0), enc)
+        loss(torch.randn(1, 3, 8, 8), _make_concept(dim=8), enc)
+        enc.encode_for_optimization.assert_called_once()
+
+    def test_falls_back_to_image_when_modality_method_missing(self) -> None:
+        # An image-only encoder (no video method) asked for video falls back.
+        enc = MagicMock(spec=[])
+        emb = F.normalize(torch.randn(1, 8), dim=-1)
+        enc.encode_for_optimization = MagicMock(return_value=emb)
+        loss = CompositeLoss(LossConfig(feature_matching_weight=0.0), enc, modality="video")
+        loss(torch.randn(1, 3, 8, 8), _make_concept(dim=8), enc)
+        enc.encode_for_optimization.assert_called_once()
+
+
+class TestLanguageBindAudioFailsLoud:
+    """The audio optimisation path must raise, not silently mis-encode."""
+
+    def test_encode_audio_for_optimization_raises(self) -> None:
+        from embedding_art.encoders.languagebind import LanguageBindEncoder
+        from embedding_art.exceptions import EncoderError
+
+        # Construct without loading weights; call the method directly on the class
+        # via a bare instance is hard (heavy __init__), so assert the method
+        # exists and raises EncoderError when invoked on a minimal stub.
+        enc = LanguageBindEncoder.__new__(LanguageBindEncoder)
+        import pytest
+
+        with pytest.raises(EncoderError):
+            enc.encode_audio_for_optimization(torch.randn(1, 1, 16000))
