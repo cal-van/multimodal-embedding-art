@@ -174,6 +174,14 @@ class OptimizationStrategy:
                 else:
                     output = generator.decode(latent)  # type: ignore[arg-type]
 
+                # Normalise video to the pipeline-canonical [B, F, C, H, W].
+                # Generators may emit channels-first [B, C, F, H, W]; the
+                # augmentation + encode_video_for_optimization paths are
+                # frame-first. Without this, video is mis-shaped into the
+                # encoder.
+                if output_modality == "video":
+                    output = self._to_canonical_video(output)
+
                 # Apply augmentation before loss computation.
                 augmented = self._augment(output, config.augmentation)
 
@@ -278,6 +286,22 @@ class OptimizationStrategy:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _to_canonical_video(t: torch.Tensor) -> torch.Tensor:
+        """Normalise a 5-D video tensor to frame-first ``[B, F, C, H, W]``.
+
+        The optimisation pipeline (``_augment``, ``encode_video_for_optimization``)
+        is frame-first, but a generator's ``decode`` may return channels-first
+        ``[B, C, F, H, W]`` (e.g. LTX-Video). Detect the channel axis (size 3)
+        and permute when it's at position 1. No-op for non-5-D tensors or when
+        already frame-first. Ambiguous only if the frame count is exactly 3.
+        """
+        if t.ndim != 5:
+            return t
+        if t.shape[1] == 3 and t.shape[2] != 3:
+            return t.permute(0, 2, 1, 3, 4).contiguous()
+        return t
 
     def _augment(self, output: torch.Tensor, aug_config: AugmentationConfig) -> torch.Tensor:
         """Apply random augmentations for robust optimization.

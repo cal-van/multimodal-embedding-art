@@ -827,3 +827,106 @@ class TestAutocastWiring:
         result = strategy.render(target, generator, encoder, config)
         assert isinstance(result, RenderResult)
         assert result.output.dtype == torch.float32  # final output is detached and clean
+
+
+# ---------------------------------------------------------------------------
+# Video shape handling (channels-first decode -> frame-first pipeline)
+# ---------------------------------------------------------------------------
+
+
+class _ChannelsFirstVideoGenerator:
+    """Decodes to channels-first [B, C, F, H, W] like LTX-Video."""
+
+    def __init__(self, frames: int = 5, size: int = 8) -> None:
+        self._frames = frames
+        self._size = size
+        self._device = torch.device("cpu")
+
+    @property
+    def latent_shape(self) -> tuple[int, ...]:
+        return (1, 4, self._frames, self._size, self._size)
+
+    @property
+    def output_modality(self) -> str:
+        return "video"
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
+
+    def init_latent(self, seed: int | None = None) -> torch.Tensor:
+        return torch.randn(self.latent_shape).requires_grad_(True)
+
+    def decode(self, latent: torch.Tensor) -> torch.Tensor:
+        # [B, 4, F, H, W] -> [B, 3, F, H, W] in [0, 1] (channels-first)
+        return latent[:, :3].sigmoid()
+
+
+class _RecordingVideoEncoder:
+    """Records the shape passed to encode_video_for_optimization."""
+
+    def __init__(self, embedding_dim: int = 16) -> None:
+        self._embedding_dim = embedding_dim
+        self._device = torch.device("cpu")
+        self.seen_video_shape: tuple[int, ...] | None = None
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._embedding_dim
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
+
+    def encode_video_for_optimization(self, tensor: torch.Tensor) -> torch.Tensor:
+        self.seen_video_shape = tuple(tensor.shape)
+        flat = tensor.reshape(tensor.shape[0], -1)[:, : self._embedding_dim]
+        if flat.shape[1] < self._embedding_dim:
+            flat = F.pad(flat, (0, self._embedding_dim - flat.shape[1]))
+        return F.normalize(flat, dim=-1)
+
+    @property
+    def card(self):
+        from embedding_art.encoders.registry import EncoderCapability, EncoderCard
+
+        return EncoderCard(
+            name="recording_video_mock",
+            capabilities=EncoderCapability.VIDEO | EncoderCapability.BACKPROP_OPTIMIZABLE,
+            embedding_dim=self._embedding_dim,
+            memory_estimate_mb=0,
+            backprop_cost=0.0,
+        )
+
+
+def test_to_canonical_video_permutes_channels_first():
+    from embedding_art.core.strategies import OptimizationStrategy
+
+    chans_first = torch.rand(1, 3, 5, 8, 8)  # [B, C, F, H, W]
+    out = OptimizationStrategy._to_canonical_video(chans_first)
+    assert out.shape == (1, 5, 3, 8, 8)  # -> [B, F, C, H, W]
+
+
+def test_to_canonical_video_leaves_frame_first_untouched():
+    from embedding_art.core.strategies import OptimizationStrategy
+
+    frame_first = torch.rand(1, 5, 3, 8, 8)  # already [B, F, C, H, W]
+    out = OptimizationStrategy._to_canonical_video(frame_first)
+    assert out.shape == (1, 5, 3, 8, 8)
+
+
+def test_video_render_feeds_frame_first_to_encoder():
+    """A channels-first video generator must reach the video encoder as
+    frame-first [B, F, C, H, W] (channels at axis 2), via output_modality."""
+    from embedding_art.core.strategies import OptimizationStrategy
+
+    gen = _ChannelsFirstVideoGenerator(frames=5, size=8)
+    enc = _RecordingVideoEncoder()
+    target = Concept(embedding=F.normalize(torch.randn(1, 16), dim=-1), description="v")
+    config = OptimizationConfig(steps=1, loss=LossConfig(feature_matching_weight=0.0))
+
+    OptimizationStrategy().render(target, gen, enc, config, output_modality="video")
+
+    assert enc.seen_video_shape is not None
+    # axis 2 must be the channel dim (==3), i.e. frame-first layout.
+    assert enc.seen_video_shape[2] == 3, enc.seen_video_shape
+    assert enc.seen_video_shape[1] == 5  # frames preserved at axis 1
