@@ -185,16 +185,7 @@ export function JobPage() {
     if (!job) {
         return (
             <div className="flex items-center gap-3" style={{ padding: '2rem 0' }}>
-                <span
-                    style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: 'var(--aqua)',
-                        boxShadow: '0 0 8px var(--aqua)',
-                        animation: 'pulse 2.4s ease-in-out infinite',
-                    }}
-                />
+                <span className="pulse-dot" />
                 <span className="eyebrow">Loading run…</span>
             </div>
         );
@@ -278,6 +269,10 @@ export function JobPage() {
                     <span className="readout">{Math.round(progress * 100)}%</span>
                 </div>
                 <div
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round((job.progress || 0) * 100)}
                     style={{
                         width: '100%',
                         height: 3,
@@ -309,17 +304,7 @@ export function JobPage() {
                             <ShowcaseManifestView manifestUrl={job.manifest_url} />
                         ) : (
                             <div className="panel flex items-center gap-3">
-                                <span
-                                    style={{
-                                        width: 6,
-                                        height: 6,
-                                        borderRadius: '50%',
-                                        background: 'var(--aqua)',
-                                        boxShadow: '0 0 8px var(--aqua)',
-                                        animation: 'pulse 2.4s ease-in-out infinite',
-                                        flexShrink: 0,
-                                    }}
-                                />
+                                <span className="pulse-dot" style={{ flexShrink: 0 }} />
                                 <span className="dim text-sm">
                                     Showcase running — the manifest will appear once renders are
                                     complete.
@@ -370,7 +355,7 @@ export function JobPage() {
                                 ) : (
                                     <img
                                         src={`http://127.0.0.1:8000${job.result_url}`}
-                                        alt="Optimization Result"
+                                        alt={(job.target_text || []).join(', ') || 'Optimization result'}
                                         style={{
                                             maxWidth: '100%',
                                             maxHeight: 420,
@@ -392,16 +377,7 @@ export function JobPage() {
                             </div>
                         ) : (
                             <div className="flex items-center gap-3">
-                                <span
-                                    style={{
-                                        width: 6,
-                                        height: 6,
-                                        borderRadius: '50%',
-                                        background: 'var(--aqua)',
-                                        boxShadow: '0 0 8px var(--aqua)',
-                                        animation: 'pulse 2.4s ease-in-out infinite',
-                                    }}
-                                />
+                                <span className="pulse-dot" />
                                 <span className="eyebrow">Awaiting render…</span>
                             </div>
                         )}
@@ -417,17 +393,7 @@ function ShowcaseEventStream({ events }: { events: ShowcaseEvent[] }) {
     if (events.length === 0) {
         return (
             <div className="panel flex items-center gap-3">
-                <span
-                    style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: 'var(--aqua)',
-                        boxShadow: '0 0 8px var(--aqua)',
-                        animation: 'pulse 2.4s ease-in-out infinite',
-                        flexShrink: 0,
-                    }}
-                />
+                <span className="pulse-dot" style={{ flexShrink: 0 }} />
                 <span className="dim text-sm">Waiting for showcase events…</span>
             </div>
         );

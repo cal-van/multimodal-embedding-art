@@ -57,6 +57,7 @@ function ModeToggle({
                 <button
                     key={m}
                     type="button"
+                    aria-pressed={mode === m}
                     onClick={() => setMode(m)}
                     className={`chip ${mode === m ? 'on' : ''}`}
                 >
@@ -301,7 +302,7 @@ function FileSlot({
     const inputId = `file-${label.toLowerCase()}`;
     return (
         <div className="field">
-            <label htmlFor={inputId}>{label}</label>
+            <span className="field-label">{label}</span>
             <label
                 htmlFor={inputId}
                 className="flex items-center justify-between gap-2 cursor-pointer mono text-xs"
@@ -379,6 +380,12 @@ function CosineMatrix({
     labels: string[];
     matrix: Record<string, Record<string, number>>;
 }) {
+    // Two-branch heatmap so negative cosines (disagreement) stay visible.
+    // Positive → amber, negative → aqua. Opacity scales with magnitude.
+    const heatColor = (v: number): string =>
+        v >= 0
+            ? `rgba(242, 168, 59, ${Math.min(1, v) * 0.55})`
+            : `rgba(111, 227, 224, ${Math.min(1, -v) * 0.4})`;
     return (
         <div className="panel rise rise-4">
             <div className="flex items-center justify-between mb-3">
@@ -431,8 +438,6 @@ function CosineMatrix({
                                 {labels.map((col) => {
                                     const v = matrix[row]?.[col] ?? 0;
                                     const isDiagonal = row === col;
-                                    // Heatmap: aqua opacity scales with the cosine value.
-                                    const fill = Math.max(0, Math.min(1, v));
                                     return (
                                         <td
                                             key={col}
@@ -443,7 +448,7 @@ function CosineMatrix({
                                                 border: isDiagonal
                                                     ? '1px solid var(--aqua-deep)'
                                                     : '1px solid var(--line)',
-                                                background: `rgba(111, 227, 224, ${fill})`,
+                                                background: heatColor(v),
                                                 color: v > 0.6 ? 'var(--ink)' : 'var(--text)',
                                                 fontWeight: isDiagonal ? 700 : 500,
                                             }}
@@ -459,7 +464,7 @@ function CosineMatrix({
                 </table>
             </div>
             <p className="faint text-xs mono mt-3" style={{ letterSpacing: '0.04em' }}>
-                cell opacity ∝ cosine · diagonal = self (1.000)
+                amber = positive · aqua = negative · diagonal = self (1.000)
             </p>
         </div>
     );

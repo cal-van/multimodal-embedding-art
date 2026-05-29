@@ -132,10 +132,11 @@ export function ShowcasePage() {
                     Show<em>case</em>
                 </h1>
                 <p className="lede">
-                    Render one concept across image, audio, video and text in a single shared
-                    LanguageBind embedding space. The realism dial sweeps from <em>honest</em> —
-                    the model's raw representation, what it sees — to <em>natural</em>, a
-                    human-legible image.
+                    See what the model actually thinks a concept <em>looks</em>, <em>sounds</em>,
+                    and <em>moves</em> like — not generated from training images, but the coordinate
+                    pulled straight out of its representation. The realism dial sweeps from{' '}
+                    <em>honest</em> (the raw representation) to <em>natural</em> (a human-legible
+                    image).
                 </p>
             </header>
 
@@ -173,6 +174,7 @@ export function ShowcasePage() {
                                 type="button"
                                 key={m}
                                 onClick={() => setModalities(toggle(modalities, m))}
+                                aria-pressed={modalities.has(m)}
                                 className={`chip ${modalities.has(m) ? 'on' : ''}`}
                             >
                                 <span className="mono" style={{ marginRight: '0.4rem' }}>
@@ -187,7 +189,9 @@ export function ShowcasePage() {
                 {/* the realism dial — centrepiece */}
                 <div className="panel rise rise-3">
                     <div className="flex justify-between items-baseline mb-3">
-                        <span className="field-label">Realism ↔ Honesty</span>
+                        <span id="realism-label" className="field-label">
+                            Realism ↔ Honesty
+                        </span>
                         <span
                             className={`readout ${realism < 0.5 ? 'cool' : ''}`}
                             style={{ opacity: compareExtremes ? 0.3 : 1 }}
@@ -223,6 +227,12 @@ export function ShowcasePage() {
                             value={realism}
                             disabled={compareExtremes}
                             onChange={(e) => setRealism(Number(e.target.value))}
+                            aria-label="Realism dial: honest to natural"
+                            aria-labelledby="realism-label"
+                            aria-valuemin={0}
+                            aria-valuemax={1}
+                            aria-valuenow={realism}
+                            aria-valuetext={caption.title}
                         />
                         <div className="mt-3">
                             <div
@@ -262,7 +272,7 @@ export function ShowcasePage() {
                                 onChange={(e) => setImageBackbone(e.target.value as 'sd35' | 'sdxl')}
                             >
                                 <option value="sd35">SD 3.5 Medium</option>
-                                <option value="sdxl">SDXL (ablation)</option>
+                                <option value="sdxl">SDXL (comparison)</option>
                             </select>
                         </div>
                         <div className="field">
@@ -277,7 +287,7 @@ export function ShowcasePage() {
                                 }
                             >
                                 <option value="stable-audio-open">Stable Audio Open</option>
-                                <option value="audioldm2">AudioLDM 2 (ablation)</option>
+                                <option value="audioldm2">AudioLDM 2 (comparison)</option>
                             </select>
                         </div>
                         <div className="field">
@@ -288,102 +298,121 @@ export function ShowcasePage() {
                                 onChange={(e) => setVideoBackbone(e.target.value as 'ltx-video' | 'svd')}
                             >
                                 <option value="ltx-video">LTX-Video</option>
-                                <option value="svd">SVD (ablation)</option>
+                                <option value="svd">SVD (comparison)</option>
                             </select>
                         </div>
                     </div>
                 </div>
 
-                {/* performance + run params */}
+                {/* quality + run params */}
                 <div className="panel rise rise-5">
-                    <span className="field-label">Compute · Apple Silicon</span>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-                        <div className="field">
-                            <label htmlFor="autocast">Autocast dtype</label>
-                            <select
-                                id="autocast"
-                                value={autocastDtype}
-                                onChange={(e) =>
-                                    setAutocastDtype(e.target.value as 'fp32' | 'fp16' | 'bf16')
-                                }
-                            >
-                                <option value="bf16">bf16 — M1 Max, ~2× faster</option>
-                                <option value="fp32">fp32 — safe / reproducible</option>
-                                <option value="fp16">fp16</option>
-                            </select>
+                    <div className="field">
+                        <div className="flex justify-between items-baseline">
+                            <label htmlFor="steps">Quality · steps per modality</label>
+                            <span className="readout">{steps}</span>
                         </div>
-                        <div className="field">
-                            <label htmlFor="compile">torch.compile</label>
-                            <select
-                                id="compile"
-                                value={compileMode}
-                                onChange={(e) => setCompileMode(e.target.value as CompileMode)}
-                            >
-                                <option value="reduce-overhead">reduce-overhead — 1.5–2.5×</option>
-                                <option value="none">none</option>
-                                <option value="default">default</option>
-                                <option value="max-autotune">max-autotune — aggressive</option>
-                            </select>
+                        <div className="text-xs dim">
+                            200 = quick preview · 1000+ = full render
                         </div>
-                        <div className="field">
-                            <div className="flex justify-between items-baseline">
-                                <label htmlFor="steps">Steps / modality</label>
-                                <span className="readout">{steps}</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                                <input
-                                    type="range"
-                                    min={10}
-                                    max={1000}
-                                    step={10}
-                                    value={steps > 1000 ? 1000 : steps}
-                                    onChange={(e) => setSteps(Number(e.target.value))}
-                                    className="flex-1"
-                                />
-                                <input
-                                    id="steps"
-                                    type="number"
-                                    min={10}
-                                    max={5000}
-                                    value={steps}
-                                    onChange={(e) => setSteps(Number(e.target.value))}
-                                    style={{ width: '5rem', textAlign: 'center' }}
-                                />
-                            </div>
-                        </div>
-                        <div className="field">
-                            <label htmlFor="seed">Seed</label>
-                            <div className="flex gap-2">
-                                <input
-                                    id="seed"
-                                    type="number"
-                                    value={seed}
-                                    placeholder="random"
-                                    onChange={(e) => setSeed(e.target.value)}
-                                    className="flex-1"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        setSeed(Math.floor(Math.random() * 1000000).toString())
-                                    }
-                                    title="Random seed"
-                                >
-                                    ⟳
-                                </button>
-                                {seed && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setSeed('')}
-                                        title="Clear seed"
-                                        style={{ color: 'var(--err)' }}
-                                    >
-                                        ✕
-                                    </button>
-                                )}
-                            </div>
+                        <div className="flex items-center gap-3 mt-1">
+                            <input
+                                type="range"
+                                min={10}
+                                max={1000}
+                                step={10}
+                                value={steps > 1000 ? 1000 : steps}
+                                onChange={(e) => setSteps(Number(e.target.value))}
+                                className="flex-1"
+                                aria-label="Steps per modality"
+                                aria-valuetext={String(steps)}
+                            />
+                            <input
+                                id="steps"
+                                type="number"
+                                min={10}
+                                max={5000}
+                                value={steps}
+                                onChange={(e) => setSteps(Number(e.target.value))}
+                                style={{ width: '5rem', textAlign: 'center' }}
+                            />
                         </div>
                     </div>
+
+                    <div className="divider" />
+
+                    <details>
+                        <summary
+                            className="field-label"
+                            style={{ cursor: 'pointer', listStyle: 'none' }}
+                        >
+                            Advanced · compute &amp; reproducibility
+                        </summary>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                            <div className="field">
+                                <label htmlFor="autocast">Autocast dtype</label>
+                                <select
+                                    id="autocast"
+                                    value={autocastDtype}
+                                    onChange={(e) =>
+                                        setAutocastDtype(
+                                            e.target.value as 'fp32' | 'fp16' | 'bf16',
+                                        )
+                                    }
+                                >
+                                    <option value="bf16">bf16 — M1 Max, ~2× faster</option>
+                                    <option value="fp32">fp32 — safe / reproducible</option>
+                                    <option value="fp16">fp16</option>
+                                </select>
+                            </div>
+                            <div className="field">
+                                <label htmlFor="compile">torch.compile</label>
+                                <select
+                                    id="compile"
+                                    value={compileMode}
+                                    onChange={(e) => setCompileMode(e.target.value as CompileMode)}
+                                >
+                                    <option value="reduce-overhead">
+                                        reduce-overhead — 1.5–2.5×
+                                    </option>
+                                    <option value="none">none</option>
+                                    <option value="default">default</option>
+                                    <option value="max-autotune">max-autotune — aggressive</option>
+                                </select>
+                            </div>
+                            <div className="field">
+                                <label htmlFor="seed">Seed</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        id="seed"
+                                        type="number"
+                                        value={seed}
+                                        placeholder="random"
+                                        onChange={(e) => setSeed(e.target.value)}
+                                        className="flex-1"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            setSeed(Math.floor(Math.random() * 1000000).toString())
+                                        }
+                                        title="Random seed"
+                                    >
+                                        ⟳
+                                    </button>
+                                    {seed && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setSeed('')}
+                                            title="Clear seed"
+                                            style={{ color: 'var(--err)' }}
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </details>
 
                     <div className="divider" />
 
@@ -407,7 +436,16 @@ export function ShowcasePage() {
                     </div>
                 </div>
 
-                <div className="flex justify-end rise rise-5">
+                <div className="flex justify-between items-center gap-3 flex-wrap rise rise-5">
+                    <div className="flex items-center gap-2 flex-wrap text-xs dim">
+                        <span>
+                            Renders run locally and take minutes — longer with more steps and
+                            modalities.
+                        </span>
+                        <span className="readout">
+                            {modalities.size} modalities × {steps} steps
+                        </span>
+                    </div>
                     <button type="submit" className="btn-primary" disabled={!isValid || loading}>
                         {loading ? 'Initialising…' : 'Run showcase →'}
                     </button>
