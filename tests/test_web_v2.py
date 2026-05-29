@@ -440,6 +440,72 @@ class TestShowcaseEndpoint:
         )
         assert response.status_code == 422
 
+    def test_realism_request_is_accepted_and_surfaced(self, client):
+        with patch.object(job_manager, "start_job") as mock_start:
+            mock_start.return_value = None
+            response = client.post(
+                "/jobs/showcase",
+                json={"target_text": "thunder", "realism": 0.3, "modalities": ["image"]},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["realism"] == 0.3
+
+    def test_realism_out_of_range_rejected(self, client):
+        for bad in (2.0, -0.1):
+            response = client.post(
+                "/jobs/showcase",
+                json={"target_text": "thunder", "realism": bad},
+            )
+            assert response.status_code == 422, f"realism={bad} should 422"
+
+    def test_realism_with_explicit_tracks_rejected(self, client):
+        response = client.post(
+            "/jobs/showcase",
+            json={"target_text": "thunder", "realism": 0.5, "tracks": ["honest", "natural"]},
+        )
+        assert response.status_code == 422
+
+    def test_invalid_compile_mode_rejected(self, client):
+        response = client.post(
+            "/jobs/showcase",
+            json={"target_text": "thunder", "compile_mode": "rm -rf"},
+        )
+        assert response.status_code == 422
+
+    def test_invalid_autocast_dtype_rejected(self, client):
+        response = client.post(
+            "/jobs/showcase",
+            json={"target_text": "thunder", "autocast_dtype": "float128"},
+        )
+        assert response.status_code == 422
+
+    def test_sae_path_traversal_rejected(self, client):
+        response = client.post(
+            "/jobs/showcase",
+            json={"target_text": "thunder", "sae_path": "../../etc/passwd"},
+        )
+        assert response.status_code == 422
+
+    def test_compile_mode_and_realism_forwarded_to_impl(self):
+        """Regression guard: the bug where _run_showcase_job dropped compile_mode.
+        Asserts compile_mode AND realism reach _showcase_impl."""
+        from embedding_art.web.services import job_manager as jm
+
+        job = job_manager.create_showcase_job(
+            target_text="goldfish",
+            modalities=["text"],
+            compile_mode="reduce-overhead",
+            realism=0.3,
+        )
+        # _run_showcase_job does a local `from ...showcase import _showcase_impl`,
+        # so patch it at the source module, not on job_manager.
+        with patch("embedding_art.cli.commands.showcase._showcase_impl") as mock_impl:
+            jm._run_showcase_job(job, broadcast=lambda _msg: None)
+        assert mock_impl.call_count == 1
+        kwargs = mock_impl.call_args.kwargs
+        assert kwargs["compile_mode"] == "reduce-overhead"
+        assert kwargs["realism"] == 0.3
+
     def test_get_returns_manifest_url_when_complete(self, client):
         """``GET /jobs/{id}`` reports manifest_url after the showcase runs."""
         with patch.object(job_manager, "start_job") as mock_start:

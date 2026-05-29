@@ -307,7 +307,7 @@ def save_linear_probe(probe: LinearProbe, path: str | Path) -> None:
 
 
 def load_linear_probe(path: str | Path, *, device: str | torch.device = "cpu") -> LinearProbe:
-    payload = torch.load(path, map_location=device)
+    payload = torch.load(path, map_location=device, weights_only=True)
     probe = LinearProbe(
         in_features=payload["in_features"],
         num_classes=payload["num_classes"],

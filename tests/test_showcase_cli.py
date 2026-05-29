@@ -378,6 +378,32 @@ class TestRealismDial:
         assert len(r0.regularization.regularizers) == len(honest.regularization.regularizers)
         assert len(r1.regularization.regularizers) == len(natural.regularization.regularizers)
 
+    def test_endpoints_have_exact_regularizer_weights(self) -> None:
+        """Lock the byte-identical contract: the dial endpoints must reproduce
+        CompositeRegularizer.minimal()/heavy() weights exactly, not just counts.
+        Guards against silent drift of the per-regulariser weight constants."""
+        from embedding_art.cli.commands.showcase import interpolate_loss_config
+
+        r0 = interpolate_loss_config(0.0)
+        r1 = interpolate_loss_config(1.0)
+
+        # honest endpoint == minimal(): LatentNorm(0.01) only
+        honest_regs = r0.regularization.regularizers
+        assert len(honest_regs) == 1
+        assert type(honest_regs[0]).__name__ == "LatentNorm"
+        assert honest_regs[0].weight == pytest.approx(0.01)
+
+        # natural endpoint == heavy(): TV(0.1), Spectral(0.01), LatentNorm(0.5), in order
+        natural_by_type = {type(r).__name__: r.weight for r in r1.regularization.regularizers}
+        assert natural_by_type["TotalVariation"] == pytest.approx(0.1)
+        assert natural_by_type["SpectralRegularizer"] == pytest.approx(0.01)
+        assert natural_by_type["LatentNorm"] == pytest.approx(0.5)
+        assert [type(r).__name__ for r in r1.regularization.regularizers] == [
+            "TotalVariation",
+            "SpectralRegularizer",
+            "LatentNorm",
+        ]
+
     def test_similarity_decreases_monotonically_with_realism(self) -> None:
         from embedding_art.cli.commands.showcase import interpolate_loss_config
 
@@ -532,6 +558,60 @@ class TestDualTrackOrchestration:
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         assert manifest["track"] == "realism-0.30"
         assert manifest["realism"] == 0.3
+
+    def test_realism_render_uses_interpolated_loss_config(self, tmp_path: Path) -> None:
+        """The realism value must actually drive the loss config — not just the
+        label. Patch interpolate_loss_config and assert it is invoked with the
+        dial value when a non-text modality is rendered."""
+        from embedding_art.cli.commands import showcase as showcase_mod
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        with (
+            patch(
+                "embedding_art.encoders.defaults.create_default_registry",
+                return_value=mock_registry,
+            ),
+            patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "embedding_art.cli.commands.showcase._render_image",
+                return_value={"path": "image.png", "final_similarity": 0.5, "backbone": "sd35"},
+            ),
+            patch.object(
+                showcase_mod,
+                "interpolate_loss_config",
+                wraps=showcase_mod.interpolate_loss_config,
+            ) as spy,
+        ):
+            showcase_mod._showcase_impl(
+                target_text="goldfish",
+                output_dir=tmp_path,
+                encoder_name="languagebind",
+                modalities=["image"],
+                steps=5,
+                seed=1,
+                device="cpu",
+                image_backbone="sd35",
+                audio_backbone="stable-audio-open",
+                video_backbone="ltx-video",
+                tracks=["honest"],
+                realism=0.3,
+                interpret=False,
+                evaluate=False,
+            )
+
+        assert spy.call_count >= 1
+        # The realism value (0.3) must be the positional/keyword arg used.
+        called_realism = (
+            spy.call_args.args[0] if spy.call_args.args else spy.call_args.kwargs.get("realism")
+        )
+        assert called_realism == 0.3
 
 
 class TestShowcaseLinearProbes:

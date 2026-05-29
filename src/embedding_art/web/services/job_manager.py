@@ -178,7 +178,7 @@ class JobManager:
         tracks: list[str] | None = None,
         realism: float | None = None,
         autocast_dtype: str = "bf16",
-        compile_mode: str = "reduce-overhead",
+        compile_mode: str = "none",
         interpret: bool = True,
         evaluate: bool = True,
         sae_path: str | None = None,
