@@ -96,6 +96,17 @@ class TestShowcaseFlagDefaults:
         assert result.exit_code != 0
         assert "track" in result.output.lower() or "bogus" in result.output
 
+    def test_realism_flag_documented(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(showcase, ["--help"])
+        assert "--realism" in result.output
+
+    def test_out_of_range_realism_rejected(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(showcase, ["-t", "x", "-o", "/tmp/out", "--realism", "2.0"])
+        assert result.exit_code != 0
+        assert "realism" in result.output.lower()
+
     def test_required_target_text(self) -> None:
         """--target-text is mandatory."""
         runner = CliRunner()
@@ -339,6 +350,65 @@ class TestTrackLossConfig:
             _build_track_loss_config("bogus")
 
 
+class TestRealismDial:
+    """`interpolate_loss_config` is the continuous honest<->natural dial.
+
+    The named tracks are its endpoints: ``honest`` == realism 0.0,
+    ``natural`` == realism 1.0. Intermediate values interpolate every weight
+    monotonically so a UI slider can sweep between 'what the model sees' and
+    'human-legible'.
+    """
+
+    def test_endpoints_match_named_tracks(self) -> None:
+        from embedding_art.cli.commands.showcase import (
+            _build_track_loss_config,
+            interpolate_loss_config,
+        )
+
+        honest = _build_track_loss_config("honest")
+        natural = _build_track_loss_config("natural")
+        r0 = interpolate_loss_config(0.0)
+        r1 = interpolate_loss_config(1.0)
+
+        assert r0.similarity_weight == honest.similarity_weight
+        assert r0.feature_matching_weight == honest.feature_matching_weight
+        assert r1.similarity_weight == natural.similarity_weight
+        assert r1.feature_matching_weight == natural.feature_matching_weight
+        # Endpoints reproduce the minimal/heavy regulariser shapes exactly.
+        assert len(r0.regularization.regularizers) == len(honest.regularization.regularizers)
+        assert len(r1.regularization.regularizers) == len(natural.regularization.regularizers)
+
+    def test_similarity_decreases_monotonically_with_realism(self) -> None:
+        from embedding_art.cli.commands.showcase import interpolate_loss_config
+
+        sims = [interpolate_loss_config(r).similarity_weight for r in (0.0, 0.25, 0.5, 0.75, 1.0)]
+        assert sims == sorted(sims, reverse=True)
+        assert len(set(sims)) == len(sims)  # strictly distinct
+
+    def test_midpoint_is_between_endpoints(self) -> None:
+        from embedding_art.cli.commands.showcase import interpolate_loss_config
+
+        mid = interpolate_loss_config(0.5)
+        assert 0.4 < mid.similarity_weight < 1.0
+        assert 0.15 < mid.feature_matching_weight < 0.5
+        # Midpoint gains the spatial regularisers absent at the honest end.
+        assert len(mid.regularization.regularizers) == 3
+
+    def test_out_of_range_raises(self) -> None:
+        from embedding_art.cli.commands.showcase import interpolate_loss_config
+
+        with pytest.raises(ValueError, match="realism"):
+            interpolate_loss_config(1.5)
+        with pytest.raises(ValueError, match="realism"):
+            interpolate_loss_config(-0.1)
+
+    def test_text_anchor_weight_forwarded(self) -> None:
+        from embedding_art.cli.commands.showcase import interpolate_loss_config
+
+        cfg = interpolate_loss_config(0.3, text_anchor_weight=0.25)
+        assert cfg.text_anchor_weight == 0.25
+
+
 class TestDualTrackOrchestration:
     """Both honest + natural tracks land into ``<output>/<track>/`` subdirs
     with a top-level summary manifest."""
@@ -422,6 +492,46 @@ class TestDualTrackOrchestration:
         assert not (tmp_path / "honest").exists()
         manifest = json.loads((tmp_path / "manifest.json").read_text())
         assert manifest["track"] == "honest"
+
+    def test_realism_renders_single_labelled_track(self, tmp_path: Path) -> None:
+        """A continuous ``realism`` value renders one flat track labelled by
+        its dial position, overriding the named ``tracks``."""
+        from embedding_art.cli.commands.showcase import _showcase_impl
+
+        mock_encoder = MagicMock()
+        mock_encoder.encode_text.return_value = torch.randn(1, 768)
+        mock_registry = MagicMock()
+        mock_registry.load.return_value = mock_encoder
+
+        with patch(
+            "embedding_art.encoders.defaults.create_default_registry",
+            return_value=mock_registry,
+        ):
+            with patch(
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry"
+            ) as mock_engine_factory:
+                mock_engine_factory.return_value = MagicMock()
+
+                _showcase_impl(
+                    target_text="goldfish",
+                    output_dir=tmp_path,
+                    encoder_name="languagebind",
+                    modalities=["text"],
+                    steps=10,
+                    seed=42,
+                    device="cpu",
+                    image_backbone="sd35",
+                    audio_backbone="stable-audio-open",
+                    video_backbone="ltx-video",
+                    tracks=["honest"],
+                    realism=0.3,
+                )
+
+        assert (tmp_path / "manifest.json").exists()
+        assert not (tmp_path / "honest").exists()
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        assert manifest["track"] == "realism-0.30"
+        assert manifest["realism"] == 0.3
 
 
 class TestShowcaseLinearProbes:

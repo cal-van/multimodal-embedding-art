@@ -31,7 +31,16 @@ class CreateShowcaseRequest(BaseModel):
     audio_backbone: str = "stable-audio-open"
     video_backbone: str = "ltx-video"
     tracks: list[str] = ["honest"]
-    autocast_dtype: str = "fp32"
+    # Continuous honest<->natural dial. When set (0.0 = honest / AI-legible,
+    # 1.0 = natural / human-legible) it renders a single bundle at that dial
+    # position and supersedes ``tracks``.
+    realism: float | None = None
+    # Perf defaults target Apple Silicon (the interactive deployment): bf16
+    # autocast roughly halves wall-time with fp32-stable gradients, and
+    # reduce-overhead torch.compile gives a further 1.5-2.5x on the hot loop
+    # with a silent fallback if MPS Inductor rejects an op.
+    autocast_dtype: str = "bf16"
+    compile_mode: str = "reduce-overhead"
     interpret: bool = True
     evaluate: bool = True
     sae_path: str | None = None
@@ -47,6 +56,13 @@ class CreateShowcaseRequest(BaseModel):
             raise ValueError(f"Unknown tracks {bad}; valid tracks: {sorted(valid)}")
         if not v:
             raise ValueError("At least one track required")
+        return v
+
+    @field_validator("realism")
+    @classmethod
+    def _validate_realism(cls, v: float | None) -> float | None:
+        if v is not None and not 0.0 <= v <= 1.0:
+            raise ValueError(f"realism must be in [0.0, 1.0], got {v}")
         return v
 
 
@@ -133,7 +149,9 @@ async def create_showcase_job(request: CreateShowcaseRequest) -> JobResponse:
         audio_backbone=request.audio_backbone,
         video_backbone=request.video_backbone,
         tracks=request.tracks,
+        realism=request.realism,
         autocast_dtype=request.autocast_dtype,
+        compile_mode=request.compile_mode,
         interpret=request.interpret,
         evaluate=request.evaluate,
         sae_path=request.sae_path,

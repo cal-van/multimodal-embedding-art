@@ -26,7 +26,9 @@ export interface ShowcaseRequest {
   audio_backbone?: 'stable-audio-open' | 'audioldm2';
   video_backbone?: 'ltx-video' | 'svd';
   tracks?: Array<'honest' | 'natural'>;
+  realism?: number | null;
   autocast_dtype?: 'fp32' | 'fp16' | 'bf16';
+  compile_mode?: 'none' | 'default' | 'reduce-overhead' | 'max-autotune';
   interpret?: boolean;
   evaluate?: boolean;
   sae_path?: string | null;

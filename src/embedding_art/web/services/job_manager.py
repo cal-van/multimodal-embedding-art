@@ -101,7 +101,9 @@ class Job:
     audio_backbone: str = "stable-audio-open"
     video_backbone: str = "ltx-video"
     tracks: list[str] = field(default_factory=lambda: ["honest"])
-    autocast_dtype: str = "fp32"
+    realism: float | None = None
+    autocast_dtype: str = "bf16"
+    compile_mode: str = "reduce-overhead"
     interpret: bool = True
     evaluate: bool = True
     sae_path: str | None = None
@@ -174,7 +176,9 @@ class JobManager:
         audio_backbone: str = "stable-audio-open",
         video_backbone: str = "ltx-video",
         tracks: list[str] | None = None,
-        autocast_dtype: str = "fp32",
+        realism: float | None = None,
+        autocast_dtype: str = "bf16",
+        compile_mode: str = "reduce-overhead",
         interpret: bool = True,
         evaluate: bool = True,
         sae_path: str | None = None,
@@ -197,7 +201,9 @@ class JobManager:
             audio_backbone=audio_backbone,
             video_backbone=video_backbone,
             tracks=list(tracks) if tracks else ["honest"],
+            realism=realism,
             autocast_dtype=autocast_dtype,
+            compile_mode=compile_mode,
             interpret=interpret,
             evaluate=evaluate,
             sae_path=sae_path,
@@ -485,7 +491,9 @@ def _run_showcase_job(job: Job, broadcast: Callable[[dict], None]) -> None:
             audio_backbone=job.audio_backbone,
             video_backbone=job.video_backbone,
             tracks=job.tracks,
+            realism=job.realism,
             autocast_dtype=job.autocast_dtype,
+            compile_mode=job.compile_mode,
             interpret=job.interpret,
             sae_path=Path(job.sae_path) if job.sae_path else None,
             evaluate=job.evaluate,

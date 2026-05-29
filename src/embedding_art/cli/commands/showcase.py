@@ -196,6 +196,17 @@ VALID_TRACKS = ("honest", "natural")
     "selected each is rendered into a subdirectory of the output.",
 )
 @click.option(
+    "--realism",
+    type=float,
+    default=None,
+    help="Continuous honest<->natural dial in [0.0, 1.0]. 0.0 = honest "
+    "(max alignment, minimal regularisation — 'what the model sees', the "
+    "AI-interpretable artefact); 1.0 = natural (heavy regularisation — the "
+    "human-legible, photographic artefact). When set, renders a single "
+    "bundle at that dial position and overrides --tracks. Omit to use the "
+    "discrete named tracks instead.",
+)
+@click.option(
     "--autocast-dtype",
     type=click.Choice(["fp32", "fp16", "bf16"]),
     default="fp32",
@@ -293,6 +304,7 @@ def showcase(
     audio_backbone: str,
     video_backbone: str,
     tracks: str,
+    realism: float | None,
     autocast_dtype: str,
     compile_mode: str,
     interpret: bool,
@@ -314,6 +326,10 @@ def showcase(
                 err=True,
             )
             sys.exit(2)
+
+    if realism is not None and not 0.0 <= realism <= 1.0:
+        click.echo(f"Invalid --realism {realism}. Must be in [0.0, 1.0].", err=True)
+        sys.exit(2)
 
     probe_encoders = _load_probe_encoders(
         [p.strip() for p in probes.split(",") if p.strip()],
@@ -339,6 +355,7 @@ def showcase(
             audio_backbone=audio_backbone,
             video_backbone=video_backbone,
             tracks=track_list,
+            realism=realism,
             autocast_dtype=autocast_dtype,
             compile_mode=compile_mode,
             probe_encoders=probe_encoders,
@@ -376,6 +393,7 @@ def _showcase_impl(
     seed_stability: int = 0,
     linear_probes_dir: Path | None = None,
     text_anchor_weight: float = 0.0,
+    realism: float | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     """Orchestrate the per-modality renderings and assemble the bundle.
@@ -384,12 +402,21 @@ def _showcase_impl(
     ``output_dir``. When ``tracks`` requests both honest and natural, each
     track gets its own subdirectory and the top-level ``manifest.json``
     summarises both.
+
+    ``realism`` (``[0.0, 1.0]``), when provided, overrides ``tracks`` and
+    renders a single flat bundle at that point on the continuous
+    honest<->natural dial (see :func:`interpolate_loss_config`). The track is
+    labelled ``realism-<value>`` so the manifest records the dial position.
     """
     from embedding_art.core.concept import Concept
     from embedding_art.core.engine import EmbeddingArtEngine
     from embedding_art.encoders.defaults import create_default_registry
 
-    if tracks is None:
+    if realism is not None:
+        # The continuous dial is a single custom render; it supersedes the
+        # discrete named tracks.
+        tracks = [_realism_label(realism)]
+    elif tracks is None:
         tracks = ["honest"]
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -432,6 +459,7 @@ def _showcase_impl(
             target=target,
             target_text=target_text,
             text_anchor_weight=text_anchor_weight,
+            realism=realism,
             encoder=encoder,
             encoder_name=encoder_name,
             engine=engine,
@@ -539,6 +567,7 @@ def _render_track(
     target: Any,
     target_text: str,
     text_anchor_weight: float = 0.0,
+    realism: float | None = None,
     encoder: Any,
     encoder_name: str,
     engine: Any,
@@ -560,18 +589,25 @@ def _render_track(
     probe_encoders: dict[str, Any] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Render a single track (honest or natural) into ``output_dir``.
+    """Render a single track into ``output_dir``.
 
-    Returns the per-track manifest dict and writes it to
+    When ``realism`` is provided the loss is taken from the continuous dial
+    (:func:`interpolate_loss_config`); otherwise ``track`` selects one of the
+    named endpoints. Returns the per-track manifest dict and writes it to
     ``output_dir/manifest.json``.
     """
     from embedding_art.core.config import OptimizationConfig
+
+    if realism is not None:
+        loss_config = interpolate_loss_config(realism, text_anchor_weight=text_anchor_weight)
+    else:
+        loss_config = _build_track_loss_config(track, text_anchor_weight=text_anchor_weight)
 
     config = OptimizationConfig(
         steps=steps,
         learning_rate=0.1,
         seed=seed,
-        loss=_build_track_loss_config(track, text_anchor_weight=text_anchor_weight),
+        loss=loss_config,
         autocast_dtype=autocast_dtype,  # type: ignore[arg-type]
         compile_mode=compile_mode,  # type: ignore[arg-type]
     )
@@ -589,6 +625,7 @@ def _render_track(
         "steps": steps,
         "seed": seed,
         "track": track,
+        "realism": realism,
         "image_backbone": image_backbone,
         "audio_backbone": audio_backbone,
         "video_backbone": video_backbone,
@@ -695,40 +732,97 @@ def _render_track(
     return manifest
 
 
-def _build_track_loss_config(track: str, *, text_anchor_weight: float = 0.0) -> Any:
-    """Return the LossConfig for the requested track.
+# Endpoints of the realism<->honesty dial. ``honest`` (realism=0.0) maximises
+# embedding/feature alignment with minimal regularisation — the generator's raw
+# attempt to *occupy the target coordinate*, the AI-interpretable artefact.
+# ``natural`` (realism=1.0) trades alignment for heavy regularisation, producing
+# the conventionally-photographic, human-legible artefact. These two numbers
+# reproduce the historical honest/natural presets exactly.
+_HONEST_SIMILARITY = 1.0
+_HONEST_FEATURE_MATCHING = 0.5
+_NATURAL_SIMILARITY = 0.4
+_NATURAL_FEATURE_MATCHING = 0.15
+# Per-regulariser weight endpoints (honest -> natural). A weight of 0 at the
+# honest end means that regulariser is simply absent there, so realism=0.0
+# reproduces ``CompositeRegularizer.minimal()`` (LatentNorm only) and
+# realism=1.0 reproduces ``CompositeRegularizer.heavy()`` (all three).
+_TV_WEIGHTS = (0.0, 0.1)
+_SPECTRAL_WEIGHTS = (0.0, 0.01)
+_LATENT_NORM_WEIGHTS = (0.01, 0.5)
 
-    * **honest** — high similarity, high feature-matching, minimal
-      regularisation. The 'what the model thinks' artefact. Until M2b
-      VSD is wired this is the v3 default.
-    * **natural** — reduced similarity, reduced feature-matching, heavy
-      regularisation. Currently a heuristic proxy for the VSD-prior natural
-      track; the regulariser balance is calibrated to produce visibly more
-      conventionally-natural outputs without abandoning the target. When
-      M2b lands the VSD prior plugs in here without changing the surface.
 
-    ``text_anchor_weight`` is forwarded to both tracks. The auxiliary
-    M4 loss is encoder-agnostic and the recommended default (0.0) is
-    a no-op; pass a positive value via ``embed-art showcase
-    --text-anchor-weight 0.25`` to enable.
+def interpolate_loss_config(realism: float, *, text_anchor_weight: float = 0.0) -> Any:
+    """Build a :class:`LossConfig` at a point on the honest<->natural dial.
+
+    ``realism`` is a continuous slider in ``[0.0, 1.0]``:
+
+    * **0.0 — honest / AI-interpretable.** Maximum embedding + feature
+      alignment, minimal regularisation. The generator's raw attempt to
+      occupy the target coordinate; renders 'what the model sees'.
+    * **1.0 — natural / human-legible.** Reduced alignment, heavy
+      regularisation. A conventionally-photographic sample of the concept.
+
+    Every loss weight interpolates linearly between the two endpoints, so the
+    dial is continuous and monotonic. The endpoints are byte-identical to the
+    legacy ``honest`` / ``natural`` track presets.
+
+    ``text_anchor_weight`` is forwarded unchanged (the M4 auxiliary loss is
+    encoder-agnostic; its default of 0.0 is a no-op).
     """
     from embedding_art.core.config import LossConfig
-    from embedding_art.regularizers.base import CompositeRegularizer
+    from embedding_art.regularizers.base import (
+        CompositeRegularizer,
+        LatentNorm,
+        SpectralRegularizer,
+        TotalVariation,
+    )
 
+    if not 0.0 <= realism <= 1.0:
+        raise ValueError(f"realism must be in [0.0, 1.0], got {realism}")
+
+    def _lerp(endpoints: tuple[float, float]) -> float:
+        lo, hi = endpoints
+        return lo + (hi - lo) * realism
+
+    tv_w = _lerp(_TV_WEIGHTS)
+    spec_w = _lerp(_SPECTRAL_WEIGHTS)
+    norm_w = _lerp(_LATENT_NORM_WEIGHTS)
+
+    # Gate zero-weight terms out so the honest endpoint stays cheap (no FFT /
+    # TV passes) and the regulariser shapes match minimal()/heavy() exactly.
+    regularizers: list[Any] = []
+    if tv_w > 0.0:
+        regularizers.append(TotalVariation(weight=tv_w))
+    if spec_w > 0.0:
+        regularizers.append(SpectralRegularizer(weight=spec_w))
+    regularizers.append(LatentNorm(weight=norm_w))
+
+    return LossConfig(
+        similarity_weight=_lerp((_HONEST_SIMILARITY, _NATURAL_SIMILARITY)),
+        feature_matching_weight=_lerp((_HONEST_FEATURE_MATCHING, _NATURAL_FEATURE_MATCHING)),
+        text_anchor_weight=text_anchor_weight,
+        regularization=CompositeRegularizer(regularizers=regularizers),
+    )
+
+
+def _realism_label(realism: float) -> str:
+    """Stable, filesystem-safe label for a point on the realism dial."""
+    return f"realism-{realism:.2f}"
+
+
+def _build_track_loss_config(track: str, *, text_anchor_weight: float = 0.0) -> Any:
+    """Return the LossConfig for a named track — the dial's endpoints.
+
+    The named tracks are the two ends of :func:`interpolate_loss_config`:
+    ``honest`` == realism 0.0, ``natural`` == realism 1.0. Kept as a thin
+    alias so the discrete dual-track ('render both ends and contrast them')
+    path and its tests stay stable while the continuous dial drives single
+    custom renders.
+    """
     if track == "honest":
-        return LossConfig(
-            similarity_weight=1.0,
-            feature_matching_weight=0.5,
-            text_anchor_weight=text_anchor_weight,
-            regularization=CompositeRegularizer.minimal(),
-        )
+        return interpolate_loss_config(0.0, text_anchor_weight=text_anchor_weight)
     if track == "natural":
-        return LossConfig(
-            similarity_weight=0.4,
-            feature_matching_weight=0.15,
-            text_anchor_weight=text_anchor_weight,
-            regularization=CompositeRegularizer.heavy(),
-        )
+        return interpolate_loss_config(1.0, text_anchor_weight=text_anchor_weight)
     raise ValueError(f"Unknown track '{track}'. Valid tracks: {VALID_TRACKS}")
 
 
