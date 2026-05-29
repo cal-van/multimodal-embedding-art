@@ -631,6 +631,29 @@ class LanguageBindEncoder:
         projected = model.visual_projection(pooled)
         return F.normalize(projected, dim=-1)
 
+    def encode_audio_for_optimization(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Differentiable audio encoding for gradient-descent loops.
+
+        NOT YET IMPLEMENTED. LanguageBind's audio tower consumes a
+        mel-spectrogram "image" produced by its processor with specific
+        params (sample rate, n_mels, target length, per-channel
+        normalisation). A correct differentiable path must replicate that
+        transform exactly; an approximate one would silently score audio
+        against a mis-preprocessed input — the very class of bug this method
+        exists to prevent. Until a validated path lands (tracked separately),
+        we fail LOUD rather than silently mis-encode audio through the image
+        ViT.
+        """
+        raise EncoderError(
+            "audio",
+            NotImplementedError(
+                "Differentiable audio optimisation is not yet implemented for "
+                "LanguageBind. Audio showcase rendering is unavailable until a "
+                "validated waveform->mel path lands. Render image/video/text "
+                "modalities, or use the audio encoder for embedding (path input) only."
+            ),
+        )
+
     def encode_text_for_optimization(
         self, token_ids: torch.Tensor, attention_mask: torch.Tensor | None = None
     ) -> torch.Tensor:

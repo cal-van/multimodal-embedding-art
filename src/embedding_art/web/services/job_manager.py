@@ -299,16 +299,13 @@ def _run_job_sync_direct(
 
         strategy = OptimizationStrategy()
 
-        # Wrap the strategy so the callback is injected automatically
+        # Wrap the strategy so the callback is injected automatically. Accept
+        # and forward **kwargs (e.g. output_modality) that the engine now
+        # threads through so the loss re-encodes with the correct modality.
         class _StrategyWithCallback:
-            def render(self, target, generator, encoder, cfg):
-                return strategy.render(
-                    target,
-                    generator,
-                    encoder,
-                    cfg,
-                    callback=progress_callback,
-                )
+            def render(self, target, generator, encoder, cfg, **kwargs):
+                kwargs.setdefault("callback", progress_callback)
+                return strategy.render(target, generator, encoder, cfg, **kwargs)
 
         # Compare job vs. single-encoder job
         if job.compare_encoder_names:

@@ -215,6 +215,11 @@ class EmbeddingArtEngine:
         if strategy is None:
             strategy = OptimizationStrategy()
 
+        # Thread the output modality through so the loss re-encodes the decoded
+        # output with the CORRECT modality encoder (image/audio/video), not the
+        # image path for everything. ``kwargs`` may already carry it; don't
+        # pass it twice.
+        kwargs.setdefault("output_modality", output_modality)
         return strategy.render(target, generator, encoder, config, **kwargs)
 
     def render_compare(

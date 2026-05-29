@@ -45,9 +45,13 @@ class CompositeLoss:
             ``config.sae_feature_weight > 0``.
     """
 
-    def __init__(self, config: LossConfig, encoder, sae=None) -> None:
+    def __init__(self, config: LossConfig, encoder, sae=None, modality: str = "image") -> None:
         self.config = config
         self.sae = sae
+        # Which modality's decoded output we re-encode each step. Drives the
+        # choice of differentiable encode method so audio/video are NOT scored
+        # through the image encoder.
+        self.modality = modality
         self.stats_extractor = self._select_extractor(encoder)
         self.reference_stats: dict[int, FeatureStatistics] | None = None
         # Cached text-anchor embedding (computed lazily on first call).
@@ -110,13 +114,29 @@ class CompositeLoss:
         self._text_anchor_source = anchor_text
         return emb
 
-    @staticmethod
-    def _encode(encoder, tensor: torch.Tensor) -> torch.Tensor:
-        """Call the encoder's optimization-oriented encoding method.
+    # Differentiable encode method per output modality. The optimisation loop
+    # decodes a generator latent for ``self.modality``, so we MUST re-encode it
+    # with the matching encoder method — otherwise an audio waveform or a video
+    # tensor is silently scored through the image ViT.
+    _OPT_ENCODE_METHODS = {
+        "image": "encode_for_optimization",
+        "video": "encode_video_for_optimization",
+        "audio": "encode_audio_for_optimization",
+        "text": "encode_text_for_optimization",
+    }
 
-        Prefers ``encode_for_optimization`` (introduced in v2 protocol) and
-        falls back to ``encode_image`` for legacy encoders.
+    def _encode(self, encoder, tensor: torch.Tensor) -> torch.Tensor:
+        """Re-encode the decoded output with the modality-correct encoder method.
+
+        Dispatches on ``self.modality``. Falls back to the image-optimisation
+        method (then legacy ``encode_image``) only when the modality-specific
+        method is absent — e.g. an image-only probe encoder.
         """
+        method_name = self._OPT_ENCODE_METHODS.get(self.modality, "encode_for_optimization")
+        fn = getattr(encoder, method_name, None)
+        if fn is not None:
+            return fn(tensor)
+        # Fallbacks for encoders that don't implement the modality-specific path.
         if hasattr(encoder, "encode_for_optimization"):
             return encoder.encode_for_optimization(tensor)
         return encoder.encode_image(tensor)  # type: ignore[return-value]
