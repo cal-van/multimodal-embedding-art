@@ -8,14 +8,16 @@ Generate art by optimising toward coordinates in a shared multimodal embedding s
 
 This system extracts the "platonic ideals" that live inside neural networks — not "generate me a goldfish" but "show me the direction in representation space that means goldfish, across every modality, cranked to maximum."
 
+A caveat worth keeping in mind: the output is a frozen generator's best attempt to occupy that coordinate — it is co-authored by the generator's manifold and the encoder's scoring, not a pure readout of what the encoder "sees." The image you get is the maximiser that the generator *can* reach, not necessarily the encoder's unconstrained ideal.
+
 ## What it does
 
 - Takes a concept (text, image, audio, or video) and encodes it to a shared 768-d **LanguageBind** embedding.
 - Renders that single target across all four modalities — image + audio + video + text — in one orchestrated showcase.
-- Optionally renders a dual track (`honest` = what the model thinks; `natural` = VSD-prior conditioned).
+- Optionally renders a dual track (`honest` = minimal regularisation; `natural` = heavy regularisation, VSD/SDS prior planned, not yet wired).
 - Produces an interpretation bundle (text-anchor readout, SAE feature lists, attribution maps, linear-probe activations) and an evaluation card (cross-modal Jaccard agreement, cross-encoder probes, seed-stability) per run.
 
-The outputs are what the model *thinks* these concepts look like — maximally activated representations, not training-data lookups.
+The outputs are a generator's *best attempt* at what the model thinks these concepts look like — maximally activated representations, not training-data lookups. They are shaped by both what the encoder rewards and what the generator can produce.
 
 ## Quick Start
 
@@ -111,7 +113,7 @@ Key flags (full list via `embed-art showcase --help`):
 | `--steps 2000` | 2000 | Optimisation steps per modality. |
 | `--autocast-dtype bf16` | `fp32` | fp16 / bf16 forward (fp32 backward). Big win on Apple Silicon. |
 | `--compile-mode reduce-overhead` | `none` | `torch.compile` for the optimisation hot loop. Silent fallback if MPS Inductor balks. |
-| `--tracks honest,natural` | `honest` | Render both tracks side-by-side. Natural track uses VSD prior. |
+| `--tracks honest,natural` | `honest` | Render both tracks side-by-side. Natural track uses heavy regularisation (VSD/SDS prior planned, not yet wired). |
 | `--image-backbone sd35` | `sd35` | `sd35` (default) or `sdxl` (legacy ablation). |
 | `--audio-backbone stable-audio-open` | `stable-audio-open` | `stable-audio-open` (default) or `audioldm2` (legacy). |
 | `--video-backbone ltx-video` | `ltx-video` | `ltx-video` (default) or `svd` (legacy). |

@@ -160,6 +160,10 @@ class CompositeLoss:
             encoder: The encoder to extract layer features from.
         """
         if target.source_input is None:
+            logger.debug(
+                "Feature-matching disabled: target has no source_input "
+                "(expected for text-derived concepts, e.g. showcase targets)."
+            )
             return
         if not hasattr(encoder, "card"):
             return

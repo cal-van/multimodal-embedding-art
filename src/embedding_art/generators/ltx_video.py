@@ -93,26 +93,38 @@ class LTXVideoGenerator:
         self._latent_h = max(1, height // self.SPATIAL_DOWNSAMPLE)
         self._latent_w = max(1, width // self.SPATIAL_DOWNSAMPLE)
 
+        # Load ONLY the VAE. The full LTXPipeline pulls the multi-GB video DiT +
+        # T5 that latent optimisation never uses; loading it and discarding all
+        # but .vae blew the memory budget. Fall back to the full pipeline only
+        # if the installed diffusers can't load the VAE subfolder.
+        pipeline = None
         try:
-            from diffusers import LTXPipeline
+            from diffusers import AutoencoderKLLTXVideo
 
-            pipeline = LTXPipeline.from_pretrained(model_id, torch_dtype=torch.float32)
-        except ImportError as exc:
-            raise GeneratorError(
-                "LTX-Video requires diffusers>=0.32 with LTXPipeline support"
-            ) from exc
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower():
-                raise OutOfMemoryError(
-                    operation="loading LTX-Video pipeline",
-                    device=device,
-                    original_error=e,
-                ) from e
-            raise ModelLoadError(model_name=model_id, original_error=e) from e
-        except OSError as e:
-            raise ModelLoadError(model_name=model_id, original_error=e) from e
+            self.vae = AutoencoderKLLTXVideo.from_pretrained(
+                model_id, subfolder="vae", torch_dtype=torch.float32
+            )
+        except (ImportError, OSError, ValueError):
+            try:
+                from diffusers import LTXPipeline
 
-        self.vae = pipeline.vae
+                pipeline = LTXPipeline.from_pretrained(model_id, torch_dtype=torch.float32)
+                self.vae = pipeline.vae
+            except ImportError as exc:
+                raise GeneratorError(
+                    "LTX-Video requires diffusers>=0.32 with LTXPipeline support"
+                ) from exc
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    raise OutOfMemoryError(
+                        operation="loading LTX-Video pipeline",
+                        device=device,
+                        original_error=e,
+                    ) from e
+                raise ModelLoadError(model_name=model_id, original_error=e) from e
+            except OSError as e:
+                raise ModelLoadError(model_name=model_id, original_error=e) from e
+
         try:
             self.vae.to(self._device)
         except RuntimeError as e:

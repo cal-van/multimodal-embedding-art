@@ -93,26 +93,38 @@ class StableAudioOpenGenerator:
         time_frames = int(audio_length_in_s * self.SAMPLE_RATE)
         self._latent_length = max(1, time_frames // self.COMPRESSION_RATIO)
 
+        # Load ONLY the VAE. The full StableAudioPipeline pulls the multi-GB DiT
+        # + T5 text encoder that latent optimisation never uses; loading it and
+        # discarding all but .vae blew the memory budget. Fall back to the full
+        # pipeline only if the installed diffusers can't load the VAE subfolder.
+        pipeline = None
         try:
-            from diffusers import StableAudioPipeline
+            from diffusers import AutoencoderOobleck
 
-            pipeline = StableAudioPipeline.from_pretrained(model_id, torch_dtype=torch.float32)
-        except ImportError as exc:
-            raise GeneratorError(
-                "Stable Audio Open requires diffusers>=0.27 with StableAudioPipeline support"
-            ) from exc
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower():
-                raise OutOfMemoryError(
-                    operation="loading Stable Audio Open pipeline",
-                    device=device,
-                    original_error=e,
-                ) from e
-            raise ModelLoadError(model_name=model_id, original_error=e) from e
-        except OSError as e:
-            raise ModelLoadError(model_name=model_id, original_error=e) from e
+            self.vae = AutoencoderOobleck.from_pretrained(
+                model_id, subfolder="vae", torch_dtype=torch.float32
+            )
+        except (ImportError, OSError, ValueError):
+            try:
+                from diffusers import StableAudioPipeline
 
-        self.vae = pipeline.vae
+                pipeline = StableAudioPipeline.from_pretrained(model_id, torch_dtype=torch.float32)
+                self.vae = pipeline.vae
+            except ImportError as exc:
+                raise GeneratorError(
+                    "Stable Audio Open requires diffusers>=0.27 with StableAudioPipeline support"
+                ) from exc
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    raise OutOfMemoryError(
+                        operation="loading Stable Audio Open pipeline",
+                        device=device,
+                        original_error=e,
+                    ) from e
+                raise ModelLoadError(model_name=model_id, original_error=e) from e
+            except OSError as e:
+                raise ModelLoadError(model_name=model_id, original_error=e) from e
+
         try:
             self.vae.to(self._device)
         except RuntimeError as e:

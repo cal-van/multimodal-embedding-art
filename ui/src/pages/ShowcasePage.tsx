@@ -22,7 +22,7 @@ function realismCaption(realism: number): { title: string; blurb: string } {
         return {
             title: 'Honest · what the model sees',
             blurb:
-                "Maximum embedding alignment, almost no regularisation. The generator's raw attempt to occupy the concept's coordinate — the machine-legible artefact.",
+                "Maximum embedding alignment, almost no regularisation. The generator's raw attempt to occupy the concept's coordinate — the machine-legible artefact. With minimal regularisation this raw maximiser can lean adversarial: it may look alien rather than faithfully representative of the concept.",
         };
     }
     if (realism >= 0.9) {

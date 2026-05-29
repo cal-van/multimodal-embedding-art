@@ -644,12 +644,19 @@ def _render_track(
                 "text_anchor": (record.get("interpretation") or {}).get("text_anchor"),
             },
         )
-        # Apple Silicon: release the MPS allocator's cached working set
-        # between modalities so the next modality starts with full
-        # headroom. No-op on non-MPS backends.
+        # Release the just-completed modality's generator BEFORE emptying the
+        # cache — otherwise all three VAEs (+ LanguageBind) stay resident and
+        # empty_mps_cache frees nothing (the Python refs are still live). Drop
+        # the engine's ref, force a GC pass, then empty the allocator.
         if getattr(config, "empty_mps_cache_between_modalities", True):
+            import gc
+
             from embedding_art.perf import empty_mps_cache
 
+            generators = getattr(engine, "_generators", None)
+            if isinstance(generators, dict):
+                generators.pop(modality, None)
+            gc.collect()
             empty_mps_cache()
 
     if "image" in modalities:

@@ -39,6 +39,27 @@ def _make_mock_vae(latent_channels: int, sample_shape: tuple[int, ...]) -> Magic
     return vae
 
 
+@pytest.fixture(autouse=True)
+def _force_pipeline_fallback(monkeypatch):
+    """Generators now load the VAE subfolder directly (AutoencoderOobleck /
+    AutoencoderKLLTXVideo) to avoid pulling the full multi-GB pipeline. With the
+    fake model ids these tests use, that direct load would hit the network — so
+    force the documented fallback to the (mocked) full pipeline, keeping these
+    tests offline and fast. The direct-load path is a thin diffusers wrapper
+    mirroring the already-tested SD3.5 generator."""
+    import diffusers
+
+    for cls_name in ("AutoencoderOobleck", "AutoencoderKLLTXVideo"):
+        cls = getattr(diffusers, cls_name, None)
+        if cls is not None:
+            monkeypatch.setattr(
+                cls,
+                "from_pretrained",
+                MagicMock(side_effect=OSError("forced pipeline fallback in tests")),
+                raising=False,
+            )
+
+
 class TestStableAudioOpenGenerator:
     """Stable Audio Open VAE-only generator basics."""
 

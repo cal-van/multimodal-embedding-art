@@ -74,7 +74,8 @@ Input (text/image/audio/video) → LanguageBind encoder → Target embedding (76
    │   │                                            ↓
    │   └──── Gradient update ←── Loss: -cosine_sim + PatchAlignment + text_anchor +
    │                                    regularization (TV + spectral + latent_norm)
-   │                                    + optional VSD prior (natural track)
+   │                                    + heavy regularisation on the natural track
+   │                                    (VSD/SDS prior planned, not yet wired)
    └──── Interpretation bundle (SAE + text-anchor + attribution + linear probes)
          + Evaluation card (cross-modal Jaccard + cross-encoder probes + seed-stability)
 ```
@@ -98,7 +99,7 @@ src/embedding_art/
 │   ├── concept.py        # Concept class with embedding arithmetic + SAEDecomposition co-state
 │   ├── config.py         # OptimizationConfig (autocast_dtype, compile_mode), AugmentationConfig, LossConfig
 │   ├── engine.py         # EmbeddingArtEngine, OptimizationResult
-│   ├── loss.py           # CompositeLoss: cosine + patch_alignment + text_anchor + VSD prior
+│   ├── loss.py           # CompositeLoss: cosine + patch_alignment + text_anchor (VSD/SDS prior planned, not yet wired)
 │   └── patch_alignment.py  # Multi-layer ViT patch-cosine alignment
 ├── encoders/
 │   ├── base.py             # Encoder protocol (v3 duck-typed)
@@ -179,7 +180,7 @@ src/embedding_art/
 **LossConfig** (`core/config.py`)
 - `similarity_weight`, `feature_matching_weight`, `text_anchor_weight`
 - `regularization`: composite regulariser instance
-- Showcase composes per-track LossConfigs (`honest` = minimal regularisation, `natural` = heavy + VSD prior)
+- Showcase composes per-track LossConfigs (`honest` = minimal regularisation, `natural` = heavy regularisation; VSD/SDS prior planned, not yet wired — heavy regularisation is the current proxy)
 
 **Regularizers** (`regularizers/base.py`)
 - `TotalVariation`: Spatial smoothness
@@ -282,6 +283,7 @@ DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 
 ## Success Metrics
 
-- Cosine similarity >0.85 with target embedding
-- Full optimization <30 minutes on M1 Max
-- Cross-modal outputs embed within 0.90 similarity of each other
+- **Cosine to target (convergence diagnostic, not a success metric).** This is the optimisation objective reported back to itself, so it's circular — a measure of whether the loop converged, not independent validation. Typical achieved values are ~0.15–0.45 with the current generator backbones, and that's expected: the generator manifold plus a cosine objective don't reach the ">0.85" an earlier spec assumed. Don't read a low cosine as failure.
+- **Cross-encoder probe (the genuinely independent signal).** Re-encode the output with a *different* encoder (SigLIP2 for image, CLAP for audio) and check whether it agrees the artefact reads as the concept. Because it's a separate model from the one being optimised against, agreement here is the real validation — not the cosine above.
+- **Cross-modal agreement.** What the code actually computes is the Jaccard overlap of the top-K text-anchor *words* between modalities — a lexical agreement proxy, not embedding cosine. A true cross-modal embedding-cosine metric (e.g. "outputs embed within 0.90 of each other") is *planned*, not yet computed.
+- **Full optimization <30 minutes on M1 Max.**

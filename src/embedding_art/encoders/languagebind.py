@@ -753,29 +753,37 @@ class LanguageBindEncoder:
     def encode(self, spec: ConceptSpec) -> Concept:
         """Encode a :class:`ConceptSpec` to a :class:`Concept`.
 
-        Dispatches on ``spec.modality`` to the appropriate ``encode_<modality>``.
-        Lazy-loads the per-modality LanguageBind checkpoint on first use.
+        Dispatches on whichever modality field is populated (``ConceptSpec`` is a
+        frozen dataclass with optional ``text``/``image``/``audio``/``video``
+        fields — there is no ``modality``/``value`` attribute). Lazy-loads the
+        per-modality LanguageBind checkpoint on first use.
         """
         from embedding_art.core.concept import Concept
 
-        modality = spec.modality
-        if modality == "text":
-            emb = self.encode_text(spec.value)
-        elif modality == "image":
-            emb = self.encode_image(spec.value)
-        elif modality == "audio":
-            emb = self.encode_audio(Path(spec.value))
-        elif modality == "video":
-            emb = self.encode_video(Path(spec.value))
-        else:
-            raise EncoderError(
-                modality,
-                ValueError(
-                    f"Unsupported modality {modality!r}; LanguageBind supports "
-                    "text / image / audio / video."
-                ),
+        if spec.text is not None:
+            return Concept(embedding=self.encode_text(spec.text), description=f'text:"{spec.text}"')
+        if spec.image is not None:
+            return Concept(
+                embedding=self.encode_image(spec.image),
+                description=f"image:{Path(spec.image).name}",
             )
-        return Concept(embedding=emb, description=str(spec.value))
+        if spec.audio is not None:
+            return Concept(
+                embedding=self.encode_audio(Path(spec.audio)),
+                description=f"audio:{Path(spec.audio).name}",
+            )
+        if spec.video is not None:
+            return Concept(
+                embedding=self.encode_video(Path(spec.video)),
+                description=f"video:{Path(spec.video).name}",
+            )
+        raise EncoderError(
+            "unknown",
+            ValueError(
+                "ConceptSpec has no modality field set — provide one of "
+                "text / image / audio / video."
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Apple Silicon perf
