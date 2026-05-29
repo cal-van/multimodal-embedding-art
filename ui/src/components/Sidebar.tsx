@@ -2,8 +2,7 @@ import { Link, useLocation } from 'react-router-dom';
 
 const NAV = [
     { idx: '01', to: '/showcase', label: 'Showcase' },
-    { idx: '02', to: '/create', label: 'Single-modality' },
-    { idx: '03', to: '/anchor-compare', label: 'Anchor Compare' },
+    { idx: '02', to: '/anchor-compare', label: 'Anchor Compare' },
 ];
 
 export function Sidebar() {
@@ -34,6 +33,27 @@ export function Sidebar() {
 
                 <div className="rail-rule" />
 
+                <Link
+                    to="/create"
+                    className={`nav-item ${isActive('/create') ? 'active' : ''}`}
+                >
+                    <span className="idx">03</span>
+                    <span>
+                        Single-modality
+                        <span
+                            className="mono"
+                            style={{
+                                fontSize: '0.55rem',
+                                letterSpacing: '0.12em',
+                                textTransform: 'uppercase',
+                                color: 'var(--text-faint)',
+                                marginLeft: '0.4rem',
+                            }}
+                        >
+                            legacy
+                        </span>
+                    </span>
+                </Link>
                 <Link
                     to="/gallery"
                     className={`nav-item ${isActive('/gallery') ? 'active' : ''}`}

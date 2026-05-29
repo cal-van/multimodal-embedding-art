@@ -77,6 +77,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -327,8 +328,8 @@ def showcase(
             )
             sys.exit(2)
 
-    if realism is not None and not 0.0 <= realism <= 1.0:
-        click.echo(f"Invalid --realism {realism}. Must be in [0.0, 1.0].", err=True)
+    if realism is not None and (not math.isfinite(realism) or not 0.0 <= realism <= 1.0):
+        click.echo(f"Invalid --realism {realism}. Must be a finite value in [0.0, 1.0].", err=True)
         sys.exit(2)
 
     probe_encoders = _load_probe_encoders(

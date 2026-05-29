@@ -36,33 +36,65 @@ export interface ShowcaseRequest {
   seed?: number | null;
 }
 
-/** Top-level structure of the JSON written to outputs/showcase/<id>/manifest.json. */
+/**
+ * Top-level structure of the JSON written to outputs/showcase/<id>/manifest.json.
+ *
+ * Mirrors exactly what `embed-art showcase` (`_showcase_impl`) writes:
+ * - Single-track: `concept`, `track`, `realism`, a `modalities` OBJECT keyed by
+ *   modality name, and an `evaluation` block.
+ * - Dual-track: `concept`, `tracks` (array), and `per_track` keyed by track name;
+ *   there is NO top-level `modalities` object in this layout.
+ *
+ * All per-modality file paths (`path`) are RELATIVE to the manifest's own
+ * directory (single-track) or to `<dir>/<track>/` (dual-track).
+ */
+export interface ShowcaseConcept {
+  text: string;
+  description?: string;
+  embedding_dim?: number;
+}
+
 export interface ShowcaseManifest {
-  target_text: string;
+  concept: ShowcaseConcept;
   encoder: string;
-  modalities: string[];
-  tracks?: string[];
-  // Single-track layout: per-modality renders sit directly here.
-  renders?: Record<string, ShowcaseModalityRender>;
-  // Dual-track layout: track-name -> per-track manifest summary.
-  per_track?: Record<string, ShowcaseTrackSummary>;
-  evaluation?: Record<string, unknown> | null;
-  [key: string]: unknown;
-}
-
-export interface ShowcaseTrackSummary {
-  modalities: string[];
-  output_dir?: string;
-  similarity_summary?: Record<string, number>;
-  [key: string]: unknown;
-}
-
-export interface ShowcaseModalityRender {
-  output_file?: string;
-  similarity?: number;
+  device?: string;
   steps?: number;
+  seed?: number | null;
+  // Single-track only:
+  track?: string;
+  realism?: number | null;
+  modalities?: Record<string, ShowcaseModalityRender>;
+  evaluation?: Record<string, unknown> | null;
+  // Dual-track only:
+  tracks?: string[];
+  per_track?: Record<string, ShowcasePerTrack>;
+  image_backbone?: string;
+  audio_backbone?: string;
+  video_backbone?: string;
+  [key: string]: unknown;
+}
+
+/** A single modality's render entry inside `modalities`. `path` is relative to the manifest dir. */
+export interface ShowcaseModalityRender {
+  path?: string;
+  final_similarity?: number;
+  backbone?: string;
   interpretation?: Record<string, unknown> | null;
   [key: string]: unknown;
+}
+
+/** A per-modality entry inside a dual-track `summary` (no interpretation, paths relative to `<dir>/<track>/`). */
+export interface ShowcaseTrackModalityEntry {
+  path?: string;
+  final_similarity?: number;
+  backbone?: string;
+}
+
+/** Dual-track `per_track[<name>]` entry. `summary` maps modality -> entry, plus a `_evaluation` block. */
+export interface ShowcasePerTrack {
+  path: string;
+  manifest: string;
+  summary: Record<string, ShowcaseTrackModalityEntry | unknown>;
 }
 
 export interface AnchorCompareTextEntry {

@@ -21,6 +21,10 @@
   --text: #ece9e1;
   --text-dim: #9097a1;
   --text-faint: #5a606b;
+  /* Label/eyebrow roles: --text-faint fails AA (2.96:1) at micro sizes, so
+     mono labels use --text-label (>=4.5:1 on panel surfaces). Reserve
+     --text-faint for genuinely decorative, non-essential text. */
+  --text-label: #868d99;
 
   /* --- accents: warm amber (brand/action) + cool aqua (data/honest) --- */
   --amber: #f2a83b;
@@ -116,7 +120,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 400; }
   font-weight: 500;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-label);
 }
 
 .mono { font-family: var(--font-mono); }
@@ -197,7 +201,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 400; }
   display: flex;
   align-items: baseline;
   gap: 0.7rem;
-  padding: 0.55rem 0.6rem;
+  padding: 0.7rem 0.6rem;
   border-radius: var(--radius);
   border: 1px solid transparent;
   font-family: var(--font-ui);
@@ -213,7 +217,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 400; }
 .nav-item .idx {
   font-family: var(--font-mono);
   font-size: 0.62rem;
-  color: var(--text-faint);
+  color: var(--text-label);
   letter-spacing: 0.1em;
   transition: color 0.2s;
 }
@@ -253,7 +257,8 @@ h1, h2, h3, h4 { margin: 0; font-weight: 400; }
   text-transform: uppercase;
   color: var(--text-faint);
 }
-.rail-foot .dot {
+.rail-foot .dot,
+.pulse-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--aqua);
   box-shadow: 0 0 8px var(--aqua);
@@ -316,7 +321,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 400; }
   font-size: 0.66rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-label);
 }
 
 .divider { height: 1px; background: var(--line); border: 0; margin: 1.5rem 0; }
@@ -340,7 +345,7 @@ textarea {
   width: 100%;
   transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
-input::placeholder { color: var(--text-faint); }
+input::placeholder { color: var(--text-label); }
 input[type='text']:hover,
 input[type='number']:hover,
 select:hover { border-color: var(--text-faint); }
@@ -413,7 +418,7 @@ button.primary:disabled { background: var(--panel-2); color: var(--text-faint); 
   color: var(--text-dim);
   background: var(--panel);
   border: 1px solid var(--line-bright);
-  padding: 0.4rem 0.85rem;
+  padding: 0.5rem 0.9rem;
   border-radius: 9999px;
   cursor: pointer;
   transition: all 0.18s;
@@ -434,7 +439,7 @@ button.primary:disabled { background: var(--panel-2); color: var(--text-faint); 
   color: var(--text-dim);
   background: transparent;
   border: 1px solid var(--line);
-  padding: 0.3rem 0.65rem;
+  padding: 0.45rem 0.7rem;
   border-radius: var(--radius);
 }
 .preset:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
@@ -458,20 +463,26 @@ input[type='range']::-webkit-slider-runnable-track {
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px; height: 14px;
-  margin-top: -6px;
+  width: 24px; height: 24px;
+  margin-top: -11px;
   border-radius: 50%;
   background: var(--accent);
-  border: 2px solid var(--ink);
+  border: 8px solid var(--ink);
   box-shadow: 0 0 0 1px var(--accent), 0 0 12px var(--accent-glow);
   transition: transform 0.1s;
 }
-input[type='range']:hover::-webkit-slider-thumb { transform: scale(1.18); }
+input[type='range']:hover::-webkit-slider-thumb { transform: scale(1.12); }
+input[type='range']:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--accent);
+}
 input[type='range']::-moz-range-track { height: 2px; background: var(--line-bright); }
 input[type='range']::-moz-range-thumb {
-  width: 14px; height: 14px; border-radius: 50%;
-  background: var(--accent); border: 2px solid var(--ink);
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent); border: 8px solid var(--ink);
   box-shadow: 0 0 0 1px var(--accent);
+}
+input[type='range']:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--accent);
 }
 
 /* ============================================================================
@@ -512,7 +523,32 @@ input[type='range']::-moz-range-thumb {
 .rise-5 { animation-delay: 0.28s; }
 
 @media (prefers-reduced-motion: reduce) {
-  .rise, .rail-foot .dot { animation: none; }
+  .rise, .rail-foot .dot, .pulse-dot { animation: none !important; }
+  *, *::before, *::after { transition: none !important; }
+}
+
+/* ============================================================================
+   MOBILE — collapse the instrument rail into a top bar below 700px
+   ========================================================================== */
+@media (max-width: 700px) {
+  .layout { grid-template-columns: 1fr; }
+  .rail {
+    position: relative;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 1rem;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    padding: 1rem 1.1rem;
+  }
+  .rail-mark { margin-bottom: 0; }
+  .rail-mark .glyph { font-size: 1.5rem; }
+  .rail-nav { flex-direction: row; flex-wrap: wrap; gap: 0.25rem 0.5rem; }
+  .rail-rule, .rail-foot { display: none; }
+  .console { padding: 1.4rem 1.1rem 3rem; max-width: 100%; }
+  .page-head h1 { font-size: 2.4rem; }
 }
 
 /* ============================================================================

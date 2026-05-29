@@ -137,7 +137,7 @@ class EncoderActivationCache:
         on_disk = self.path_for(modality, content_hash)
         if on_disk.exists():
             try:
-                tensor = torch.load(on_disk, map_location="cpu")
+                tensor = torch.load(on_disk, map_location="cpu", weights_only=True)
                 self._mem[mem_key] = tensor
                 self.hits += 1
                 return tensor

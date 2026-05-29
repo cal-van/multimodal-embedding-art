@@ -3,28 +3,38 @@ import { api } from '../services/api';
 import type {
     ShowcaseManifest,
     ShowcaseModalityRender,
-    ShowcaseTrackSummary,
+    ShowcasePerTrack,
+    ShowcaseTrackModalityEntry,
 } from '../services/api';
 
 interface Props {
     manifestUrl: string;
 }
 
+/** Directory the manifest lives in, e.g. "/outputs/showcase/<id>". Render `path`s are relative to it. */
+function manifestDir(manifestUrl: string): string {
+    const i = manifestUrl.lastIndexOf('/');
+    return i >= 0 ? manifestUrl.slice(0, i) : manifestUrl;
+}
+
+function joinUrl(dir: string, ...parts: string[]): string {
+    return api.absoluteUrl([dir, ...parts].join('/'));
+}
+
 /**
  * Renders the contents of ``outputs/showcase/<id>/manifest.json``.
  *
- * Supports both layouts produced by the showcase command:
- * - Single-track flat layout: ``renders`` map of modality -> render entry.
- * - Dual-track layout: ``per_track`` map of track name -> per-track summary
- *   pointing at its own subdirectory.
+ * Matches the schema `embed-art showcase` actually writes:
+ * - Single-track: `concept`, `modalities` (object keyed by modality), `evaluation`.
+ * - Dual-track: `concept`, `tracks`, `per_track` (object keyed by track name).
  *
- * Interpretation and evaluation panels render whatever fields are present in
- * the manifest, gracefully degrading when fields are missing — both pieces are
- * still under active development backend-side.
+ * Per-modality file paths are relative to the manifest's directory, so they are
+ * resolved against `manifestDir(manifestUrl)`.
  */
 export function ShowcaseManifestView({ manifestUrl }: Props) {
     const [manifest, setManifest] = useState<ShowcaseManifest | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const dir = manifestDir(manifestUrl);
 
     useEffect(() => {
         let cancelled = false;
@@ -57,50 +67,48 @@ export function ShowcaseManifestView({ manifestUrl }: Props) {
     if (!manifest) {
         return (
             <div className="panel flex items-center gap-3">
-                <span
-                    style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: 'var(--aqua)',
-                        boxShadow: '0 0 8px var(--aqua)',
-                        animation: 'pulse 2.4s ease-in-out infinite',
-                        flexShrink: 0,
-                    }}
-                />
+                <span className="pulse-dot" style={{ flexShrink: 0 }} />
                 <span className="eyebrow">Loading showcase manifest…</span>
             </div>
         );
     }
+
+    const concept = manifest.concept?.text ?? '(untitled)';
+    const modalityNames = manifest.modalities
+        ? Object.keys(manifest.modalities)
+        : manifest.tracks ?? [];
+    const realismValue = typeof manifest.realism === 'number' ? manifest.realism : null;
 
     return (
         <div className="flex flex-col gap-6">
             <div className="panel">
                 <span className="eyebrow">— Concept</span>
                 <h2 className="display mt-1" style={{ fontSize: '2rem' }}>
-                    {manifest.target_text}
+                    {concept}
                 </h2>
                 <div className="divider" />
                 <div className="flex flex-wrap gap-3 items-center text-sm">
                     <span className="field-label">Encoder</span>
                     <span className="mono dim">{manifest.encoder}</span>
-                    <span className="field-label">Modalities</span>
-                    <span className="mono dim">{manifest.modalities.join(', ')}</span>
-                    {manifest.tracks && manifest.tracks.length > 0 && (
-                        <>
-                            <span className="field-label">Tracks</span>
-                            <span className="mono dim">{manifest.tracks.join(', ')}</span>
-                        </>
+                    <span className="field-label">{manifest.modalities ? 'Modalities' : 'Tracks'}</span>
+                    <span className="mono dim">{modalityNames.join(', ')}</span>
+                    {realismValue !== null && (
+                        <span className={`readout ${realismValue < 0.5 ? 'cool' : ''}`}>
+                            realism {realismValue.toFixed(2)}
+                        </span>
+                    )}
+                    {manifest.track && !realismValue && (
+                        <span className="readout">{manifest.track}</span>
                     )}
                 </div>
             </div>
 
             {manifest.per_track && Object.keys(manifest.per_track).length > 0 ? (
-                <DualTrackView perTrack={manifest.per_track} />
-            ) : manifest.renders ? (
-                <SingleTrackView renders={manifest.renders} />
+                <DualTrackView perTrack={manifest.per_track} dir={dir} concept={concept} />
+            ) : manifest.modalities && Object.keys(manifest.modalities).length > 0 ? (
+                <SingleTrackView modalities={manifest.modalities} dir={dir} concept={concept} />
             ) : (
-                <div className="panel dim text-sm">Manifest contains no renders yet.</div>
+                <div className="panel dim text-sm">Renders will appear here once the run completes.</div>
             )}
 
             {manifest.evaluation && Object.keys(manifest.evaluation).length > 0 && (
@@ -110,64 +118,83 @@ export function ShowcaseManifestView({ manifestUrl }: Props) {
     );
 }
 
-function DualTrackView({
-    perTrack,
+function SingleTrackView({
+    modalities,
+    dir,
+    concept,
 }: {
-    perTrack: Record<string, ShowcaseTrackSummary>;
+    modalities: Record<string, ShowcaseModalityRender>;
+    dir: string;
+    concept: string;
 }) {
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {Object.entries(perTrack).map(([track, summary]) => {
+            {Object.entries(modalities).map(([modality, render]) => (
+                <ModalityCard
+                    key={modality}
+                    modality={modality}
+                    url={render.path ? joinUrl(dir, render.path) : null}
+                    similarity={render.final_similarity}
+                    interpretation={render.interpretation ?? null}
+                    concept={concept}
+                />
+            ))}
+        </div>
+    );
+}
+
+function DualTrackView({
+    perTrack,
+    dir,
+    concept,
+}: {
+    perTrack: Record<string, ShowcasePerTrack>;
+    dir: string;
+    concept: string;
+}) {
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Object.entries(perTrack).map(([track, entry]) => {
                 const isHonest = track.toLowerCase().includes('honest');
-                const accent = isHonest ? 'var(--aqua)' : 'var(--amber)';
+                const isNatural = track.toLowerCase().includes('natural');
+                const accent = isHonest ? 'var(--aqua)' : isNatural ? 'var(--amber)' : 'var(--text)';
+                const eyebrow = isHonest
+                    ? '— Machine-legible'
+                    : isNatural
+                      ? '— Human-legible'
+                      : '— Track';
+                // summary maps modality -> {path, final_similarity, backbone}, plus a _evaluation block.
+                const mods = Object.entries(entry.summary).filter(
+                    ([k]) => k !== '_evaluation',
+                ) as [string, ShowcaseTrackModalityEntry][];
                 return (
                     <div key={track} className="panel flex flex-col gap-3">
-                        <div className="flex items-center justify-between">
-                            <div className="flex flex-col gap-1">
-                                <span className="eyebrow">
-                                    {isHonest ? '— Machine-legible' : '— Human-legible'}
-                                </span>
-                                <h3 className="display" style={{ fontSize: '1.6rem', color: accent }}>
-                                    {track.toUpperCase()}
-                                </h3>
-                            </div>
+                        <div className="flex flex-col gap-1">
+                            <span className="eyebrow">{eyebrow}</span>
+                            <h3 className="display" style={{ fontSize: '1.6rem', color: accent }}>
+                                {track.toUpperCase()}
+                            </h3>
                         </div>
-                        <div className="flex flex-wrap gap-1">
-                            {summary.modalities.map((m) => (
-                                <span
-                                    key={m}
-                                    className="mono text-xs"
-                                    style={{
-                                        color: 'var(--text-dim)',
-                                        border: '1px solid var(--line)',
-                                        borderRadius: 'var(--radius)',
-                                        padding: '0.12rem 0.45rem',
-                                    }}
-                                >
-                                    {m}
-                                </span>
-                            ))}
-                        </div>
-                        {summary.similarity_summary && (
-                            <div className="flex flex-col gap-1">
-                                <span className="field-label">Similarity</span>
-                                <div className="flex flex-wrap gap-1">
-                                    {Object.entries(summary.similarity_summary).map(([k, v]) => (
-                                        <span
-                                            key={k}
-                                            className={`readout ${isHonest ? 'cool' : ''}`}
-                                        >
-                                            {k} {v.toFixed(3)}
+                        {mods.map(([modality, m]) => (
+                            <div key={modality} className="flex flex-col gap-2">
+                                <div className="flex items-center justify-between">
+                                    <span className="field-label">{modality}</span>
+                                    {typeof m.final_similarity === 'number' && (
+                                        <span className={`readout ${isHonest ? 'cool' : ''}`}>
+                                            sim {m.final_similarity.toFixed(3)}
                                         </span>
-                                    ))}
+                                    )}
                                 </div>
+                                {m.path && (
+                                    <RenderPreview
+                                        modality={modality}
+                                        url={joinUrl(dir, entry.path, m.path)}
+                                        concept={concept}
+                                        track={track}
+                                    />
+                                )}
                             </div>
-                        )}
-                        {summary.output_dir && (
-                            <div className="mono text-xs faint" style={{ wordBreak: 'break-all' }}>
-                                {summary.output_dir}
-                            </div>
-                        )}
+                        ))}
                     </div>
                 );
             })}
@@ -175,28 +202,19 @@ function DualTrackView({
     );
 }
 
-function SingleTrackView({
-    renders,
-}: {
-    renders: Record<string, ShowcaseModalityRender>;
-}) {
-    return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {Object.entries(renders).map(([modality, render]) => (
-                <ModalityCard key={modality} modality={modality} render={render} />
-            ))}
-        </div>
-    );
-}
-
 function ModalityCard({
     modality,
-    render,
+    url,
+    similarity,
+    interpretation,
+    concept,
 }: {
     modality: string;
-    render: ShowcaseModalityRender;
+    url: string | null;
+    similarity?: number;
+    interpretation: Record<string, unknown> | null;
+    concept: string;
 }) {
-    const fileUrl = render.output_file ? api.absoluteUrl(render.output_file) : null;
     return (
         <div className="panel flex flex-col gap-3">
             <div className="flex items-center justify-between">
@@ -206,17 +224,28 @@ function ModalityCard({
                         {modality}
                     </h3>
                 </div>
-                {typeof render.similarity === 'number' && (
-                    <span className="readout cool">sim {render.similarity.toFixed(3)}</span>
+                {typeof similarity === 'number' && (
+                    <span className="readout cool">sim {similarity.toFixed(3)}</span>
                 )}
             </div>
-            {fileUrl && <RenderPreview modality={modality} url={fileUrl} />}
-            {render.interpretation && <InterpretationBlock data={render.interpretation} />}
+            {url && <RenderPreview modality={modality} url={url} concept={concept} />}
+            {interpretation && <InterpretationBlock data={interpretation} />}
         </div>
     );
 }
 
-function RenderPreview({ modality, url }: { modality: string; url: string }) {
+function RenderPreview({
+    modality,
+    url,
+    concept,
+    track,
+}: {
+    modality: string;
+    url: string;
+    concept: string;
+    track?: string;
+}) {
+    const alt = `${modality} render of "${concept}"${track ? ` (${track})` : ''}`;
     const framed: React.CSSProperties = {
         maxWidth: '100%',
         maxHeight: 256,
@@ -228,13 +257,13 @@ function RenderPreview({ modality, url }: { modality: string; url: string }) {
         display: 'block',
     };
     if (modality === 'image') {
-        return <img src={url} alt={`${modality} render`} style={framed} />;
+        return <img src={url} alt={alt} style={framed} />;
     }
     if (modality === 'audio') {
-        return <audio controls src={url} style={{ width: '100%' }} />;
+        return <audio controls src={url} style={{ width: '100%' }} aria-label={alt} />;
     }
     if (modality === 'video') {
-        return <video controls src={url} style={{ ...framed, width: '100%' }} />;
+        return <video controls src={url} style={{ ...framed, width: '100%' }} aria-label={alt} />;
     }
     return (
         <a href={url} target="_blank" rel="noreferrer" className="preset">
@@ -291,14 +320,10 @@ function InterpretationBlock({ data }: { data: Record<string, unknown> }) {
     );
 }
 
-function formatProbeReading(
-    name: string,
-    value: number | Record<string, number>,
-): string {
+function formatProbeReading(name: string, value: number | Record<string, number>): string {
     if (typeof value === 'number') {
         return `${name}=${value.toFixed(2)}`;
     }
-    // Multi-class: surface the argmax label + its probability.
     const entries = Object.entries(value);
     if (entries.length === 0) return `${name}=?`;
     const [topLabel, topProb] = entries.reduce(
@@ -309,9 +334,7 @@ function formatProbeReading(
 }
 
 function EvaluationCard({ evaluation }: { evaluation: Record<string, unknown> }) {
-    const perModality = evaluation.per_modality_similarity as
-        | Record<string, number>
-        | undefined;
+    const perModality = evaluation.per_modality_similarity as Record<string, number> | undefined;
     const jaccard = evaluation.cross_modal_text_anchor_agreement_jaccard as
         | Record<string, Record<string, number>>
         | undefined;
@@ -383,19 +406,12 @@ function EvaluationCard({ evaluation }: { evaluation: Record<string, unknown> })
     );
 }
 
-function jaccardHeatColor(v: number): string {
-    // amber heat — agreement intensity
-    const clamped = Math.max(0, Math.min(1, v));
-    return `rgba(242, 168, 59, ${(clamped * 0.55).toFixed(3)})`;
-}
-
-function cosineHeatColor(v: number): string {
+function heatColor(v: number): string {
+    // Two-branch: positive agreement → amber, negative/disagreement → aqua. Opacity ∝ |v|.
     const clamped = Math.max(-1, Math.min(1, v));
     if (clamped >= 0) {
-        // positive agreement → amber
         return `rgba(242, 168, 59, ${(clamped * 0.55).toFixed(3)})`;
     }
-    // disagreement → aqua
     return `rgba(111, 227, 224, ${(-clamped * 0.4).toFixed(3)})`;
 }
 
@@ -422,10 +438,7 @@ function SimilarityMatrix({
                     padding: '0.75rem',
                 }}
             >
-                <table
-                    className="w-full text-xs mono"
-                    style={{ borderCollapse: 'collapse' }}
-                >
+                <table className="w-full text-xs mono" style={{ borderCollapse: 'collapse' }}>
                     <thead>
                         <tr>
                             <th className="faint" style={{ padding: '0.5rem', textAlign: 'left', fontWeight: 400 }}></th>
@@ -456,7 +469,7 @@ function SimilarityMatrix({
                                 </th>
                                 {colKeys.map((c) => {
                                     const v = matrix[r]?.[c];
-                                    const bg = v !== undefined ? jaccardHeatColor(v) : 'transparent';
+                                    const bg = v !== undefined ? heatColor(v) : 'transparent';
                                     return (
                                         <td
                                             key={c}
@@ -482,11 +495,7 @@ function SimilarityMatrix({
     );
 }
 
-function ProbeTable({
-    table,
-}: {
-    table: Record<string, Record<string, number | null>>;
-}) {
+function ProbeTable({ table }: { table: Record<string, Record<string, number | null>> }) {
     const modalities = Object.keys(table).sort();
     const probeNames = Array.from(
         new Set(modalities.flatMap((m) => Object.keys(table[m] ?? {}))),
@@ -533,7 +542,7 @@ function ProbeTable({
                             </th>
                             {probeNames.map((p) => {
                                 const v = table[m]?.[p];
-                                const bg = v !== undefined && v !== null ? cosineHeatColor(v) : 'transparent';
+                                const bg = v !== undefined && v !== null ? heatColor(v) : 'transparent';
                                 return (
                                     <td
                                         key={p}

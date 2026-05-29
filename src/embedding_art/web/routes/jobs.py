@@ -1,5 +1,7 @@
+import math
+
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from embedding_art.web.services.job_manager import Job, JobStatus, job_manager
 from embedding_art.web.sockets import manager
@@ -35,12 +37,15 @@ class CreateShowcaseRequest(BaseModel):
     # 1.0 = natural / human-legible) it renders a single bundle at that dial
     # position and supersedes ``tracks``.
     realism: float | None = None
-    # Perf defaults target Apple Silicon (the interactive deployment): bf16
-    # autocast roughly halves wall-time with fp32-stable gradients, and
-    # reduce-overhead torch.compile gives a further 1.5-2.5x on the hot loop
-    # with a silent fallback if MPS Inductor rejects an op.
+    # Perf default for the interactive (Apple Silicon) deployment: bf16 autocast
+    # roughly halves wall-time with fp32-stable gradients. This INTENTIONALLY
+    # diverges from the CLI default (fp32), which favours reproducibility/ablation;
+    # the web app is the interactive M1 Max surface.
     autocast_dtype: str = "bf16"
-    compile_mode: str = "reduce-overhead"
+    # compile_mode defaults to "none" (matching the CLI). torch.compile is opt-in:
+    # it recompiles per modality/track and its warmup is not amortised over a single
+    # short web run, so a blanket default can make first runs slower, not faster.
+    compile_mode: str = "none"
     interpret: bool = True
     evaluate: bool = True
     sae_path: str | None = None
@@ -61,9 +66,47 @@ class CreateShowcaseRequest(BaseModel):
     @field_validator("realism")
     @classmethod
     def _validate_realism(cls, v: float | None) -> float | None:
-        if v is not None and not 0.0 <= v <= 1.0:
-            raise ValueError(f"realism must be in [0.0, 1.0], got {v}")
+        if v is not None and (not math.isfinite(v) or not 0.0 <= v <= 1.0):
+            raise ValueError(f"realism must be a finite value in [0.0, 1.0], got {v}")
         return v
+
+    @field_validator("autocast_dtype")
+    @classmethod
+    def _validate_autocast(cls, v: str) -> str:
+        valid = {"fp32", "fp16", "bf16"}
+        if v not in valid:
+            raise ValueError(f"autocast_dtype must be one of {sorted(valid)}, got {v!r}")
+        return v
+
+    @field_validator("compile_mode")
+    @classmethod
+    def _validate_compile_mode(cls, v: str) -> str:
+        valid = {"none", "default", "reduce-overhead", "max-autotune"}
+        if v not in valid:
+            raise ValueError(f"compile_mode must be one of {sorted(valid)}, got {v!r}")
+        return v
+
+    @field_validator("sae_path")
+    @classmethod
+    def _validate_sae_path(cls, v: str | None) -> str | None:
+        # The web surface is local-first, but reject obvious parent-directory
+        # traversal so a future non-local deployment can't be coaxed into
+        # reading arbitrary files up the tree.
+        if v is not None and ".." in v.replace("\\", "/").split("/"):
+            raise ValueError("sae_path must not contain '..' path segments")
+        return v
+
+    @model_validator(mode="after")
+    def _reject_realism_with_explicit_tracks(self) -> "CreateShowcaseRequest":
+        # `realism` renders a single bundle and overrides `tracks`. If a caller
+        # sets realism AND customises tracks (away from the default), the tracks
+        # would be silently discarded — fail loudly instead of surprising them.
+        if self.realism is not None and self.tracks != ["honest"]:
+            raise ValueError(
+                "realism overrides tracks; do not set both. "
+                "Use realism for a single dial point, or tracks for named endpoints."
+            )
+        return self
 
 
 class CompareJobRequest(BaseModel):
@@ -94,6 +137,7 @@ class JobResponse(BaseModel):
     kind: str = "single"
     manifest_url: str | None = None
     tracks: list[str] = []
+    realism: float | None = None
     modalities: list[str] = []
     target_text: list[str] = []
     output_modality: str = "image"
@@ -224,6 +268,7 @@ def _map_job_to_response(job: Job) -> JobResponse:
         kind=job.kind,
         manifest_url=job.manifest_path,
         tracks=job.tracks if job.kind == "showcase" else [],
+        realism=job.realism if job.kind == "showcase" else None,
         modalities=job.modalities if job.kind == "showcase" else [],
         target_text=job.target_text,
         output_modality=job.output_modality,
