@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 
+const PRESETS = ['goldfish', 'fire + water', 'sunset', 'pine forest', 'electricity'];
+
 export function CreatePage() {
     const [target, setTarget] = useState('goldfish');
     const [modality, setModality] = useState('image');
@@ -28,72 +30,66 @@ export function CreatePage() {
     const isValid = target.trim().length > 0;
 
     return (
-        <div className="max-w-xl mx-auto flex flex-col gap-6">
-            <h1 className="text-2xl font-bold">Create New Optimization</h1>
+        <div className="max-w-xl mx-auto">
+            <header className="page-head rise rise-1">
+                <span className="eyebrow">02 — Single-modality optimisation</span>
+                <h1 className="display">
+                    Single<em>-modality</em>
+                </h1>
+                <p className="lede">
+                    The legacy ImageBind single-generator path — one concept, one output modality.
+                    The four-modality <em>Showcase</em> is the canonical flow; this route is kept for
+                    back-compat and ablation.
+                </p>
+            </header>
 
-            <form onSubmit={handleSubmit} className="card flex flex-col gap-4">
-                <div>
-                    <label className="block text-sm text-dim mb-2">Target Concept</label>
+            <form onSubmit={handleSubmit} className="panel rise rise-2 flex flex-col gap-4">
+                <div className="field">
+                    <label htmlFor="target">Target concept</label>
                     <input
+                        id="target"
                         type="text"
                         value={target}
                         onChange={(e) => setTarget(e.target.value)}
                         placeholder="e.g. goldfish, fire + water"
-                        className="w-full"
                         autoFocus
                     />
-                    <div className="preset-container">
-                        {[
-                            { label: 'goldfish 🐠', value: 'goldfish' },
-                            { label: 'fire + water 🔥💧', value: 'fire + water' },
-                            { label: 'sunset 🌅', value: 'sunset' },
-                            { label: 'pine forest 🌲', value: 'pine forest' },
-                            { label: 'electricity ⚡', value: 'electricity' }
-                        ].map((p) => (
+                    <div className="flex flex-wrap gap-2 mt-1">
+                        {PRESETS.map((p) => (
                             <button
                                 type="button"
-                                key={p.value}
-                                onClick={() => setTarget(p.value)}
-                                className="preset-btn"
+                                key={p}
+                                onClick={() => setTarget(p)}
+                                className="preset"
                             >
-                                {p.label}
+                                {p}
                             </button>
                         ))}
                     </div>
-                    <p className="text-xs text-dim mt-2">Enter text descriptions to guide the optimization.</p>
+                    <p className="text-xs dim mt-2">
+                        Enter a text description to guide the optimisation.
+                    </p>
                 </div>
 
-                <div>
-                    <label className="block text-sm text-dim mb-2">Output Modality</label>
-                    <div className="relative">
-                        <select
-                            className="w-full appearance-none pr-8"
-                            style={{ appearance: 'none', WebkitAppearance: 'none' }}
-                            id="modality"
-                            name="modality"
-                            value={modality}
-                            onChange={(e) => setModality(e.target.value)}
-                        >
-                            <option value="image">Image 🖼️</option>
-                            <option value="video">Video 🎥</option>
-                            <option value="audio">Audio 🎵</option>
-                        </select>
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-dim" style={{ fontSize: '0.75rem' }}>
-                            ▼
-                        </div>
-                    </div>
-                </div>
+                <div className="divider" />
 
-                <div className="flex justify-end pt-4">
-                    <button
-                        type="submit"
-                        className={`px-6 py-2 rounded-lg font-medium transition-all ${isValid && !loading
-                                ? 'primary'
-                                : 'cursor-not-allowed'
-                            }`}
-                        disabled={!isValid || loading}
+                <div className="field">
+                    <label htmlFor="modality">Output modality</label>
+                    <select
+                        id="modality"
+                        name="modality"
+                        value={modality}
+                        onChange={(e) => setModality(e.target.value)}
                     >
-                        {loading ? 'Starting Engine...' : 'Start Optimization'}
+                        <option value="image">Image</option>
+                        <option value="video">Video</option>
+                        <option value="audio">Audio</option>
+                    </select>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                    <button type="submit" className="btn-primary" disabled={!isValid || loading}>
+                        {loading ? 'Initialising…' : 'Start optimisation →'}
                     </button>
                 </div>
             </form>

@@ -7,11 +7,9 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
     return (
-        <div className="layout-container">
+        <div className="layout">
             <Sidebar />
-            <main className="main-content">
-                {children}
-            </main>
+            <main className="console">{children}</main>
         </div>
     );
 }

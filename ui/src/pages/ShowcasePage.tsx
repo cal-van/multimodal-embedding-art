@@ -7,6 +7,14 @@ type Modality = 'image' | 'audio' | 'video' | 'text';
 type CompileMode = 'none' | 'default' | 'reduce-overhead' | 'max-autotune';
 
 const ALL_MODALITIES: Modality[] = ['image', 'audio', 'video', 'text'];
+const MODALITY_GLYPH: Record<Modality, string> = {
+    image: '◳',
+    audio: '◌',
+    video: '▷',
+    text: '¶',
+};
+
+const PRESETS = ['thunder', 'deep sea', 'goldfish', 'electric storm', 'nebula', 'volcano'];
 
 /** Human-readable framing for a point on the honest<->natural dial. */
 function realismCaption(realism: number): { title: string; blurb: string } {
@@ -14,7 +22,7 @@ function realismCaption(realism: number): { title: string; blurb: string } {
         return {
             title: 'Honest · what the model sees',
             blurb:
-                "Maximum embedding alignment, almost no regularisation. The generator's raw attempt to occupy the concept's coordinate — the AI-interpretable artefact.",
+                "Maximum embedding alignment, almost no regularisation. The generator's raw attempt to occupy the concept's coordinate — the machine-legible artefact.",
         };
     }
     if (realism >= 0.9) {
@@ -31,14 +39,18 @@ function realismCaption(realism: number): { title: string; blurb: string } {
     };
 }
 
-/**
- * v3 four-modality showcase form. POSTs to /jobs/showcase and navigates to
- * /jobs/:id where the JobPage renders the manifest bundle.
- */
+/** Honest (aqua) -> Natural (amber) temperature for the dial. */
+function temperature(realism: number): string {
+    const honest = [111, 227, 224];
+    const natural = [242, 168, 59];
+    const c = honest.map((h, i) => Math.round(h + (natural[i] - h) * realism));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+
 export function ShowcasePage() {
     const [target, setTarget] = useState('thunder');
     const [modalities, setModalities] = useState<Set<Modality>>(new Set(ALL_MODALITIES));
-    // Continuous honest<->natural dial: 0 = honest (AI-legible), 1 = natural (human-legible).
+    // Continuous honest<->natural dial: 0 = honest (machine-legible), 1 = natural (human-legible).
     const [realism, setRealism] = useState(0);
     // When on, render both extremes side-by-side instead of the single dial point.
     const [compareExtremes, setCompareExtremes] = useState(false);
@@ -58,11 +70,8 @@ export function ShowcasePage() {
 
     const toggle = <T extends string>(set: Set<T>, value: T): Set<T> => {
         const next = new Set(set);
-        if (next.has(value)) {
-            next.delete(value);
-        } else {
-            next.add(value);
-        }
+        if (next.has(value)) next.delete(value);
+        else next.add(value);
         return next;
     };
 
@@ -79,9 +88,7 @@ export function ShowcasePage() {
             modalities: Array.from(modalities),
             // Compare mode renders both named endpoints; otherwise a single
             // bundle at the dial position.
-            ...(compareExtremes
-                ? { tracks: ['honest', 'natural'] }
-                : { realism }),
+            ...(compareExtremes ? { tracks: ['honest', 'natural'] } : { realism }),
             image_backbone: imageBackbone,
             audio_backbone: audioBackbone,
             video_backbone: videoBackbone,
@@ -108,170 +115,158 @@ export function ShowcasePage() {
 
     const isValid = target.trim().length > 0 && modalities.size > 0;
     const caption = realismCaption(realism);
+    const temp = temperature(realism);
+    const dialStyle = compareExtremes
+        ? { opacity: 0.3, pointerEvents: 'none' as const }
+        : ({
+              ['--accent']: temp,
+              ['--accent-bright']: temp,
+              ['--accent-glow']: 'transparent',
+          } as React.CSSProperties);
 
     return (
-        <div className="max-w-3xl mx-auto flex flex-col gap-6">
-            <div>
-                <h1 className="text-2xl font-bold">Four-Modality Showcase</h1>
-                <p className="text-sm text-dim mt-1">
+        <div className="max-w-3xl mx-auto">
+            <header className="page-head rise rise-1">
+                <span className="eyebrow">01 — Four-modality synthesis</span>
+                <h1 className="display">
+                    Show<em>case</em>
+                </h1>
+                <p className="lede">
                     Render one concept across image, audio, video and text in a single shared
-                    LanguageBind embedding space. The realism dial sweeps from <em>honest</em>{' '}
-                    (the model's raw representation — what it sees) to <em>natural</em> (a
-                    human-legible image), or compare both extremes side-by-side.
+                    LanguageBind embedding space. The realism dial sweeps from <em>honest</em> —
+                    the model's raw representation, what it sees — to <em>natural</em>, a
+                    human-legible image.
                 </p>
-            </div>
+            </header>
 
-            <form onSubmit={handleSubmit} className="card flex flex-col gap-5">
-                <div>
-                    <label className="block text-sm text-dim mb-2" htmlFor="target">
-                        Target Concept
-                    </label>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                {/* concept */}
+                <div className="panel rise rise-2 field">
+                    <label htmlFor="target">Target concept</label>
                     <input
                         id="target"
                         type="text"
                         value={target}
                         onChange={(e) => setTarget(e.target.value)}
-                        placeholder="e.g. thunder, deep sea, electric storm"
-                        className="w-full"
+                        placeholder="thunder, deep sea, electric storm…"
                         autoFocus
                     />
-                    <div className="preset-container">
-                        {[
-                            { label: 'thunder ⚡', value: 'thunder' },
-                            { label: 'deep sea 🌊', value: 'deep sea' },
-                            { label: 'goldfish 🐠', value: 'goldfish' },
-                            { label: 'electric storm ⛈️', value: 'electric storm' },
-                            { label: 'nebula 🌌', value: 'nebula' },
-                            { label: 'volcano 🔥', value: 'volcano' }
-                        ].map((p) => (
+                    <div className="flex flex-wrap gap-2 mt-1">
+                        {PRESETS.map((p) => (
                             <button
                                 type="button"
-                                key={p.value}
-                                onClick={() => setTarget(p.value)}
-                                className="preset-btn"
+                                key={p}
+                                onClick={() => setTarget(p)}
+                                className="preset"
                             >
-                                {p.label}
+                                {p}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="divider" />
+
+                    <span className="field-label">Modalities</span>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                        {ALL_MODALITIES.map((m) => (
+                            <button
+                                type="button"
+                                key={m}
+                                onClick={() => setModalities(toggle(modalities, m))}
+                                className={`chip ${modalities.has(m) ? 'on' : ''}`}
+                            >
+                                <span className="mono" style={{ marginRight: '0.4rem' }}>
+                                    {MODALITY_GLYPH[m]}
+                                </span>
+                                {m}
                             </button>
                         ))}
                     </div>
                 </div>
 
-                <div>
-                    <div className="text-sm text-dim mb-2">Modalities</div>
-                    <div className="flex flex-wrap gap-2">
-                        {ALL_MODALITIES.map((m) => {
-                            const active = modalities.has(m);
-                            return (
-                                <button
-                                    type="button"
-                                    key={m}
-                                    onClick={() => setModalities(toggle(modalities, m))}
-                                    style={{
-                                        background: active ? 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%)' : 'rgba(255,255,255,0.03)',
-                                        borderColor: active ? 'transparent' : 'rgba(255,255,255,0.06)',
-                                        color: active ? '#ffffff' : 'var(--color-text-dim)',
-                                        boxShadow: active ? '0 4px 12px rgba(139, 92, 246, 0.25)' : 'none',
-                                    }}
-                                    className="px-4 py-1.5 rounded-full text-sm font-medium transition-all"
-                                >
-                                    {m === 'image' && '🖼️ '}
-                                    {m === 'audio' && '🎵 '}
-                                    {m === 'video' && '🎥 '}
-                                    {m === 'text' && '✍️ '}
-                                    {m.charAt(0).toUpperCase() + m.slice(1)}
-                                </button>
-                            );
-                        })}
-                    </div>
-                </div>
-
-                <div>
-                    <div className="flex justify-between items-baseline mb-2">
-                        <label className="text-sm text-dim" htmlFor="realism">
-                            Realism ↔ Honesty
-                        </label>
+                {/* the realism dial — centrepiece */}
+                <div className="panel rise rise-3">
+                    <div className="flex justify-between items-baseline mb-3">
+                        <span className="field-label">Realism ↔ Honesty</span>
                         <span
-                            className="text-xs"
-                            style={{
-                                fontSize: '0.75rem',
-                                padding: '0.125rem 0.5rem',
-                                background: 'rgba(255,255,255,0.06)',
-                                borderRadius: '9999px',
-                                lineHeight: 1,
-                                opacity: compareExtremes ? 0.35 : 1,
-                            }}
+                            className={`readout ${realism < 0.5 ? 'cool' : ''}`}
+                            style={{ opacity: compareExtremes ? 0.3 : 1 }}
                         >
-                            {realism.toFixed(2)}
+                            r = {realism.toFixed(2)}
                         </span>
                     </div>
-                    <div
-                        className="flex justify-between text-xs text-dim mb-1"
-                        style={{ fontSize: '0.7rem', opacity: compareExtremes ? 0.35 : 1 }}
-                    >
-                        <span>😇 Honest</span>
-                        <span>🎨 Natural</span>
+
+                    <div style={dialStyle}>
+                        <div
+                            className="flex justify-between mono"
+                            style={{ fontSize: '0.68rem', letterSpacing: '0.1em', marginBottom: '0.5rem' }}
+                        >
+                            <span style={{ color: 'var(--aqua)' }}>HONEST · machine</span>
+                            <span style={{ color: 'var(--amber)' }}>human · NATURAL</span>
+                        </div>
+                        <div
+                            style={{
+                                height: 3,
+                                borderRadius: 2,
+                                marginBottom: '-3px',
+                                background:
+                                    'linear-gradient(90deg, var(--aqua) 0%, var(--amber) 100%)',
+                                opacity: 0.45,
+                            }}
+                        />
+                        <input
+                            id="realism"
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={realism}
+                            disabled={compareExtremes}
+                            onChange={(e) => setRealism(Number(e.target.value))}
+                        />
+                        <div className="mt-3">
+                            <div
+                                className="display"
+                                style={{ fontSize: '1.5rem', color: temp }}
+                            >
+                                {caption.title}
+                            </div>
+                            <p className="dim text-sm mt-1" style={{ maxWidth: '58ch' }}>
+                                {caption.blurb}
+                            </p>
+                        </div>
                     </div>
-                    <input
-                        id="realism"
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        value={realism}
-                        disabled={compareExtremes}
-                        onChange={(e) => setRealism(Number(e.target.value))}
-                        className="w-full"
-                        style={{ opacity: compareExtremes ? 0.35 : 1 }}
-                    />
-                    <div
-                        className="mt-2"
-                        style={{ opacity: compareExtremes ? 0.35 : 1 }}
-                    >
-                        <div className="text-sm font-medium">{caption.title}</div>
-                        <p className="text-xs text-dim mt-1">{caption.blurb}</p>
-                    </div>
+
                     <label
-                        className="flex items-center gap-2 cursor-pointer select-none text-sm text-dim mt-3 pt-3"
-                        style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                        className="flex items-center gap-2 cursor-pointer select-none text-sm dim mt-4 pt-3"
+                        style={{ borderTop: '1px solid var(--line)' }}
                     >
                         <input
                             type="checkbox"
                             checked={compareExtremes}
                             onChange={(e) => setCompareExtremes(e.target.checked)}
-                            style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
                         />
-                        Compare both extremes side-by-side (renders honest <em>and</em> natural)
+                        Compare both extremes side-by-side — render honest <em>and</em> natural
                     </label>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                        <label className="block text-sm text-dim mb-2" htmlFor="image-backbone">
-                            Image backbone
-                        </label>
-                        <div className="relative">
+                {/* backbones */}
+                <div className="panel rise rise-4">
+                    <span className="field-label">Generators</span>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+                        <div className="field">
+                            <label htmlFor="image-backbone">Image</label>
                             <select
                                 id="image-backbone"
                                 value={imageBackbone}
-                                onChange={(e) =>
-                                    setImageBackbone(e.target.value as 'sd35' | 'sdxl')
-                                }
-                                className="w-full pr-8"
-                                style={{ appearance: 'none', WebkitAppearance: 'none' }}
+                                onChange={(e) => setImageBackbone(e.target.value as 'sd35' | 'sdxl')}
                             >
-                                <option value="sd35">SD 3.5 Medium (canonical)</option>
+                                <option value="sd35">SD 3.5 Medium</option>
                                 <option value="sdxl">SDXL (ablation)</option>
                             </select>
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-xs text-dim">
-                                ▼
-                            </div>
                         </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm text-dim mb-2" htmlFor="audio-backbone">
-                            Audio backbone
-                        </label>
-                        <div className="relative">
+                        <div className="field">
+                            <label htmlFor="audio-backbone">Audio</label>
                             <select
                                 id="audio-backbone"
                                 value={audioBackbone}
@@ -280,185 +275,141 @@ export function ShowcasePage() {
                                         e.target.value as 'stable-audio-open' | 'audioldm2',
                                     )
                                 }
-                                className="w-full pr-8"
-                                style={{ appearance: 'none', WebkitAppearance: 'none' }}
                             >
-                                <option value="stable-audio-open">Stable Audio Open (canonical)</option>
+                                <option value="stable-audio-open">Stable Audio Open</option>
                                 <option value="audioldm2">AudioLDM 2 (ablation)</option>
                             </select>
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-xs text-dim">
-                                ▼
-                            </div>
                         </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm text-dim mb-2" htmlFor="video-backbone">
-                            Video backbone
-                        </label>
-                        <div className="relative">
+                        <div className="field">
+                            <label htmlFor="video-backbone">Video</label>
                             <select
                                 id="video-backbone"
                                 value={videoBackbone}
-                                onChange={(e) =>
-                                    setVideoBackbone(e.target.value as 'ltx-video' | 'svd')
-                                }
-                                className="w-full pr-8"
-                                style={{ appearance: 'none', WebkitAppearance: 'none' }}
+                                onChange={(e) => setVideoBackbone(e.target.value as 'ltx-video' | 'svd')}
                             >
-                                <option value="ltx-video">LTX-Video (canonical)</option>
+                                <option value="ltx-video">LTX-Video</option>
                                 <option value="svd">SVD (ablation)</option>
                             </select>
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-xs text-dim">
-                                ▼
-                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm text-dim mb-2" htmlFor="autocast">
-                            Autocast dtype
-                        </label>
-                        <div className="relative">
+                {/* performance + run params */}
+                <div className="panel rise rise-5">
+                    <span className="field-label">Compute · Apple Silicon</span>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                        <div className="field">
+                            <label htmlFor="autocast">Autocast dtype</label>
                             <select
                                 id="autocast"
                                 value={autocastDtype}
                                 onChange={(e) =>
                                     setAutocastDtype(e.target.value as 'fp32' | 'fp16' | 'bf16')
                                 }
-                                className="w-full pr-8"
-                                style={{ appearance: 'none', WebkitAppearance: 'none' }}
                             >
-                                <option value="bf16">bf16 (M1 Max: ~2x faster)</option>
-                                <option value="fp32">fp32 (safe / reproducible)</option>
+                                <option value="bf16">bf16 — M1 Max, ~2× faster</option>
+                                <option value="fp32">fp32 — safe / reproducible</option>
                                 <option value="fp16">fp16</option>
                             </select>
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-xs text-dim">
-                                ▼
-                            </div>
                         </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm text-dim mb-2" htmlFor="compile">
-                            torch.compile
-                        </label>
-                        <div className="relative">
+                        <div className="field">
+                            <label htmlFor="compile">torch.compile</label>
                             <select
                                 id="compile"
                                 value={compileMode}
                                 onChange={(e) => setCompileMode(e.target.value as CompileMode)}
-                                className="w-full pr-8"
-                                style={{ appearance: 'none', WebkitAppearance: 'none' }}
                             >
-                                <option value="reduce-overhead">reduce-overhead (1.5–2.5x)</option>
-                                <option value="none">none (no compile)</option>
+                                <option value="reduce-overhead">reduce-overhead — 1.5–2.5×</option>
+                                <option value="none">none</option>
                                 <option value="default">default</option>
-                                <option value="max-autotune">max-autotune (aggressive)</option>
+                                <option value="max-autotune">max-autotune — aggressive</option>
                             </select>
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-xs text-dim">
-                                ▼
+                        </div>
+                        <div className="field">
+                            <div className="flex justify-between items-baseline">
+                                <label htmlFor="steps">Steps / modality</label>
+                                <span className="readout">{steps}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="range"
+                                    min={10}
+                                    max={1000}
+                                    step={10}
+                                    value={steps > 1000 ? 1000 : steps}
+                                    onChange={(e) => setSteps(Number(e.target.value))}
+                                    className="flex-1"
+                                />
+                                <input
+                                    id="steps"
+                                    type="number"
+                                    min={10}
+                                    max={5000}
+                                    value={steps}
+                                    onChange={(e) => setSteps(Number(e.target.value))}
+                                    style={{ width: '5rem', textAlign: 'center' }}
+                                />
+                            </div>
+                        </div>
+                        <div className="field">
+                            <label htmlFor="seed">Seed</label>
+                            <div className="flex gap-2">
+                                <input
+                                    id="seed"
+                                    type="number"
+                                    value={seed}
+                                    placeholder="random"
+                                    onChange={(e) => setSeed(e.target.value)}
+                                    className="flex-1"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setSeed(Math.floor(Math.random() * 1000000).toString())
+                                    }
+                                    title="Random seed"
+                                >
+                                    ⟳
+                                </button>
+                                {seed && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setSeed('')}
+                                        title="Clear seed"
+                                        style={{ color: 'var(--err)' }}
+                                    >
+                                        ✕
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
-                    <div>
-                        <div className="flex justify-between items-center mb-2">
-                            <label className="block text-sm text-dim" htmlFor="steps">
-                                Steps
-                            </label>
-                            <span className="text-xs text-dim" style={{ fontSize: '0.75rem', padding: '0.125rem 0.5rem', background: 'rgba(255,255,255,0.06)', borderRadius: '9999px', lineHeight: 1 }}>{steps}</span>
-                        </div>
-                        <div className="flex items-center gap-4">
+
+                    <div className="divider" />
+
+                    <div className="flex gap-6 text-sm dim flex-wrap">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input
-                                id="steps-slider"
-                                type="range"
-                                min={10}
-                                max={1000}
-                                step={10}
-                                value={steps > 1000 ? 1000 : steps}
-                                onChange={(e) => setSteps(Number(e.target.value))}
-                                className="flex-1"
+                                type="checkbox"
+                                checked={interpret}
+                                onChange={(e) => setInterpret(e.target.checked)}
                             />
-                            <input
-                                id="steps"
-                                type="number"
-                                min={10}
-                                max={5000}
-                                value={steps}
-                                onChange={(e) => setSteps(Number(e.target.value))}
-                                className="w-24 text-center"
-                                style={{ width: '5.5rem', textAlign: 'center', padding: '0.5rem 0.25rem' }}
-                            />
-                        </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm text-dim mb-2" htmlFor="seed">
-                            Seed (optional)
+                            Interpretation bundle
                         </label>
-                        <div className="flex gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
                             <input
-                                id="seed"
-                                type="number"
-                                value={seed}
-                                placeholder="random"
-                                onChange={(e) => setSeed(e.target.value)}
-                                className="flex-1"
+                                type="checkbox"
+                                checked={evaluate}
+                                onChange={(e) => setEvaluate(e.target.checked)}
                             />
-                            <button
-                                type="button"
-                                onClick={() => setSeed(Math.floor(Math.random() * 1000000).toString())}
-                                className="px-3"
-                                style={{ minWidth: '2.5rem', padding: '0.5rem' }}
-                                title="Generate random seed"
-                            >
-                                🎲
-                            </button>
-                            {seed && (
-                                <button
-                                    type="button"
-                                    onClick={() => setSeed('')}
-                                    className="px-3"
-                                    style={{ minWidth: '2.5rem', padding: '0.5rem', color: 'var(--color-error)' }}
-                                    title="Clear seed"
-                                >
-                                    ✕
-                                </button>
-                            )}
-                        </div>
+                            Evaluation card
+                        </label>
                     </div>
                 </div>
 
-                <div className="flex gap-6 text-sm text-dim">
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                            type="checkbox"
-                            checked={interpret}
-                            onChange={(e) => setInterpret(e.target.checked)}
-                            style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
-                        />
-                        Compute interpretation bundle
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                            type="checkbox"
-                            checked={evaluate}
-                            onChange={(e) => setEvaluate(e.target.checked)}
-                            style={{ accentColor: 'var(--color-primary)', cursor: 'pointer' }}
-                        />
-                        Compute evaluation card
-                    </label>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                    <button
-                        type="submit"
-                        className={`px-6 py-2 rounded-lg font-medium transition-all ${isValid && !loading
-                                ? 'primary'
-                                : 'cursor-not-allowed'
-                            }`}
-                        disabled={!isValid || loading}
-                    >
-                        {loading ? 'Starting…' : 'Start Showcase'}
+                <div className="flex justify-end rise rise-5">
+                    <button type="submit" className="btn-primary" disabled={!isValid || loading}>
+                        {loading ? 'Initialising…' : 'Run showcase →'}
                     </button>
                 </div>
             </form>

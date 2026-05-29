@@ -20,8 +20,8 @@ describe('CreatePage', () => {
                 <CreatePage />
             </MemoryRouter>
         );
-        expect(screen.getByText('Create New Optimization')).toBeInTheDocument();
-        expect(screen.getByText('Start Optimization')).toBeInTheDocument();
+        expect(screen.getByText('02 — Single-modality optimisation')).toBeInTheDocument();
+        expect(screen.getByText('Start optimisation →')).toBeInTheDocument();
     });
 
     it('submits form', async () => {
@@ -37,7 +37,7 @@ describe('CreatePage', () => {
         const input = screen.getByPlaceholderText('e.g. goldfish, fire + water');
         fireEvent.change(input, { target: { value: 'test concept' } });
 
-        const button = screen.getByText('Start Optimization');
+        const button = screen.getByText('Start optimisation →');
         fireEvent.click(button);
 
         await waitFor(() => {

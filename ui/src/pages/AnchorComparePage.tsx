@@ -22,18 +22,24 @@ import type {
 export function AnchorComparePage() {
     const [mode, setMode] = useState<'text' | 'multimodal'>('text');
     return (
-        <div className="max-w-5xl mx-auto flex flex-col gap-6">
-            <div>
-                <h1 className="text-2xl font-bold">Anchor Comparison</h1>
-                <p className="text-sm text-dim mt-1">
-                    Probe whether semantically equivalent inputs land at the same point
-                    in the canonical LanguageBind embedding space. Use <strong>Text</strong> for
-                    a pure-text comparison or <strong>Multimodal</strong> to bring image / audio /
-                    video references into the same space.
+        <div className="max-w-3xl mx-auto">
+            <header className="page-head rise rise-1">
+                <span className="eyebrow">03 — Cross-modal alignment</span>
+                <h1 className="display">
+                    Anchor <em>Compare</em>
+                </h1>
+                <p className="lede">
+                    Project text, image, audio and video references into the shared
+                    LanguageBind embedding space, then read their pairwise{' '}
+                    <em>cosine geometry</em> and the top text-anchor words each encoding
+                    resolves to in language space.
                 </p>
+            </header>
+
+            <div className="flex flex-col gap-4">
+                <ModeToggle mode={mode} setMode={setMode} />
+                {mode === 'text' ? <TextOnlyForm /> : <MultimodalForm />}
             </div>
-            <ModeToggle mode={mode} setMode={setMode} />
-            {mode === 'text' ? <TextOnlyForm /> : <MultimodalForm />}
         </div>
     );
 }
@@ -46,16 +52,13 @@ function ModeToggle({
     setMode: (m: 'text' | 'multimodal') => void;
 }) {
     return (
-        <div className="flex gap-2">
+        <div className="flex gap-2 rise rise-2">
             {(['text', 'multimodal'] as const).map((m) => (
                 <button
                     key={m}
                     type="button"
                     onClick={() => setMode(m)}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === m
-                        ? 'bg-[#8b5cf6] text-white shadow-[0_0_15px_rgba(139,92,246,0.5)]'
-                        : 'bg-[#27272a] text-dim hover:bg-[#3f3f46]'
-                        }`}
+                    className={`chip ${mode === m ? 'on' : ''}`}
                 >
                     {m === 'text' ? 'Text' : 'Multimodal'}
                 </button>
@@ -105,36 +108,32 @@ function TextOnlyForm() {
 
     return (
         <>
-            <form onSubmit={handleSubmit} className="card flex flex-col gap-4">
-                <div>
-                    <label className="block text-sm text-dim mb-2" htmlFor="concept">
-                        Concept label
-                    </label>
+            <form onSubmit={handleSubmit} className="panel rise rise-3 flex flex-col gap-4">
+                <div className="field">
+                    <label htmlFor="concept">Concept label</label>
                     <input
                         id="concept"
                         type="text"
                         value={conceptLabel}
                         onChange={(e) => setConceptLabel(e.target.value)}
-                        className="w-full bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md"
                     />
                 </div>
-                <div>
-                    <label className="block text-sm text-dim mb-2" htmlFor="texts">
-                        Text references (one per line, at least two)
-                    </label>
+                <div className="field">
+                    <label htmlFor="texts">Text references (one per line, at least two)</label>
                     <textarea
                         id="texts"
                         value={textsRaw}
                         onChange={(e) => setTextsRaw(e.target.value)}
                         rows={6}
-                        className="w-full bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md font-mono text-sm"
+                        className="mono text-sm"
                     />
                 </div>
-                <div className="flex gap-4 items-end">
-                    <div>
-                        <label className="block text-sm text-dim mb-2" htmlFor="topk">
-                            Top-K text-anchor words
-                        </label>
+
+                <div className="divider" />
+
+                <div className="flex gap-4 items-end flex-wrap">
+                    <div className="field">
+                        <label htmlFor="topk">Top-K text-anchor words</label>
                         <input
                             id="topk"
                             type="number"
@@ -142,22 +141,20 @@ function TextOnlyForm() {
                             max={50}
                             value={topK}
                             onChange={(e) => setTopK(Number(e.target.value))}
-                            className="bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md w-24"
+                            style={{ width: '6rem', textAlign: 'center' }}
                         />
                     </div>
                     <button
                         type="submit"
                         disabled={loading}
-                        className={`px-6 py-2 rounded-lg font-medium transition-all ml-auto ${loading
-                                ? 'bg-[#27272a] text-dim cursor-not-allowed'
-                                : 'bg-[#8b5cf6] hover:bg-[#7c3aed] text-white shadow-[0_0_15px_rgba(139,92,246,0.5)]'
-                            }`}
+                        className="btn-primary"
+                        style={{ marginLeft: 'auto' }}
                     >
-                        {loading ? 'Comparing…' : 'Run comparison'}
+                        {loading ? 'Comparing…' : 'Run comparison →'}
                     </button>
                 </div>
             </form>
-            {error && <div className="card text-sm text-red-400">{error}</div>}
+            {error && <ErrorPanel message={error} />}
             {result && <TextResultView result={result} />}
         </>
     );
@@ -166,7 +163,7 @@ function TextOnlyForm() {
 function TextResultView({ result }: { result: AnchorCompareResponse }) {
     const labels = result.entries.map((e) => e.label);
     return (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
             <CosineMatrix labels={labels} matrix={result.cosine_matrix} />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {result.entries.map((entry) => (
@@ -227,41 +224,40 @@ function MultimodalForm() {
 
     return (
         <>
-            <form onSubmit={handleSubmit} className="card flex flex-col gap-4">
-                <div>
-                    <label className="block text-sm text-dim mb-2" htmlFor="concept-multi">
-                        Concept label
-                    </label>
+            <form onSubmit={handleSubmit} className="panel rise rise-3 flex flex-col gap-4">
+                <div className="field">
+                    <label htmlFor="concept-multi">Concept label</label>
                     <input
                         id="concept-multi"
                         type="text"
                         value={conceptLabel}
                         onChange={(e) => setConceptLabel(e.target.value)}
-                        className="w-full bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md"
                     />
                 </div>
-                <div>
-                    <label className="block text-sm text-dim mb-2" htmlFor="text-multi">
-                        Text reference (optional)
-                    </label>
+                <div className="field">
+                    <label htmlFor="text-multi">Text reference (optional)</label>
                     <input
                         id="text-multi"
                         type="text"
                         value={text}
                         onChange={(e) => setText(e.target.value)}
-                        className="w-full bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md"
                     />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <FileSlot label="Image" accept="image/*" file={image} onChange={setImage} />
-                    <FileSlot label="Audio" accept="audio/*" file={audio} onChange={setAudio} />
-                    <FileSlot label="Video" accept="video/*" file={video} onChange={setVideo} />
+
+                <div className="field">
+                    <span className="field-label">Modal references</span>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
+                        <FileSlot label="Image" accept="image/*" file={image} onChange={setImage} />
+                        <FileSlot label="Audio" accept="audio/*" file={audio} onChange={setAudio} />
+                        <FileSlot label="Video" accept="video/*" file={video} onChange={setVideo} />
+                    </div>
                 </div>
-                <div className="flex gap-4 items-end">
-                    <div>
-                        <label className="block text-sm text-dim mb-2" htmlFor="topk-multi">
-                            Top-K text-anchor words
-                        </label>
+
+                <div className="divider" />
+
+                <div className="flex gap-4 items-end flex-wrap">
+                    <div className="field">
+                        <label htmlFor="topk-multi">Top-K text-anchor words</label>
                         <input
                             id="topk-multi"
                             type="number"
@@ -269,25 +265,23 @@ function MultimodalForm() {
                             max={50}
                             value={topK}
                             onChange={(e) => setTopK(Number(e.target.value))}
-                            className="bg-[#18181b] border border-[#27272a] text-[#f4f4f5] p-2 rounded-md w-24"
+                            style={{ width: '6rem', textAlign: 'center' }}
                         />
                     </div>
-                    <span className="text-xs text-dim self-center">
-                        {refsPresent} reference{refsPresent === 1 ? '' : 's'} attached
+                    <span className="readout cool" style={{ alignSelf: 'center' }}>
+                        {refsPresent} ref{refsPresent === 1 ? '' : 's'} attached
                     </span>
                     <button
                         type="submit"
                         disabled={loading || refsPresent === 0}
-                        className={`px-6 py-2 rounded-lg font-medium transition-all ml-auto ${loading || refsPresent === 0
-                            ? 'bg-[#27272a] text-dim cursor-not-allowed'
-                            : 'bg-[#8b5cf6] hover:bg-[#7c3aed] text-white shadow-[0_0_15px_rgba(139,92,246,0.5)]'
-                            }`}
+                        className="btn-primary"
+                        style={{ marginLeft: 'auto' }}
                     >
-                        {loading ? 'Comparing…' : 'Run comparison'}
+                        {loading ? 'Comparing…' : 'Run comparison →'}
                     </button>
                 </div>
             </form>
-            {error && <div className="card text-sm text-red-400">{error}</div>}
+            {error && <ErrorPanel message={error} />}
             {result && <MultimodalResultView result={result} />}
         </>
     );
@@ -304,20 +298,42 @@ function FileSlot({
     file: File | null;
     onChange: (f: File | null) => void;
 }) {
+    const inputId = `file-${label.toLowerCase()}`;
     return (
-        <div>
-            <label className="block text-sm text-dim mb-2">{label}</label>
+        <div className="field">
+            <label htmlFor={inputId}>{label}</label>
+            <label
+                htmlFor={inputId}
+                className="flex items-center justify-between gap-2 cursor-pointer mono text-xs"
+                style={{
+                    padding: '0.62rem 0.8rem',
+                    borderRadius: 'var(--radius)',
+                    border: `1px dashed ${file ? 'var(--aqua-deep)' : 'var(--line-bright)'}`,
+                    background: 'var(--ink-deep)',
+                    color: file ? 'var(--aqua-bright)' : 'var(--text-faint)',
+                }}
+            >
+                <span
+                    style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                    }}
+                    title={file ? file.name : undefined}
+                >
+                    {file ? file.name : 'No file — click to select'}
+                </span>
+                <span aria-hidden style={{ color: 'var(--text-faint)' }}>
+                    {file ? '◉' : '＋'}
+                </span>
+            </label>
             <input
+                id={inputId}
                 type="file"
                 accept={accept}
                 onChange={(e) => onChange(e.target.files?.[0] ?? null)}
-                className="block w-full text-xs text-dim file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-[#27272a] file:text-[#f4f4f5]"
+                style={{ display: 'none' }}
             />
-            {file && (
-                <div className="text-xs text-dim mt-1 truncate" title={file.name}>
-                    {file.name}
-                </div>
-            )}
         </div>
     );
 }
@@ -325,7 +341,7 @@ function FileSlot({
 function MultimodalResultView({ result }: { result: AnchorCompareMultimodalResponse }) {
     const labels = result.entries.map((e) => e.modality);
     return (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
             <CosineMatrix labels={labels} matrix={result.cosine_matrix} />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {result.entries.map((entry) => (
@@ -345,6 +361,17 @@ function MultimodalResultView({ result }: { result: AnchorCompareMultimodalRespo
 // Shared sub-components (cosine matrix + anchor card).
 // ---------------------------------------------------------------------------
 
+function ErrorPanel({ message }: { message: string }) {
+    return (
+        <div
+            className="panel rise rise-3 mono text-sm"
+            style={{ color: 'var(--err)', borderColor: 'rgba(240, 120, 106, 0.4)' }}
+        >
+            {message}
+        </div>
+    );
+}
+
 function CosineMatrix({
     labels,
     matrix,
@@ -353,15 +380,34 @@ function CosineMatrix({
     matrix: Record<string, Record<string, number>>;
 }) {
     return (
-        <div className="card">
-            <h3 className="text-sm font-bold uppercase tracking-wide mb-3">Cosine Matrix</h3>
-            <div className="overflow-x-auto">
-                <table className="w-full text-xs font-mono">
+        <div className="panel rise rise-4">
+            <div className="flex items-center justify-between mb-3">
+                <span className="field-label">Cosine matrix</span>
+                <span className="eyebrow">cross-modal agreement</span>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+                <table
+                    className="mono text-xs"
+                    style={{
+                        width: '100%',
+                        borderCollapse: 'separate',
+                        borderSpacing: '2px',
+                    }}
+                >
                     <thead>
                         <tr>
-                            <th className="text-left p-2 text-dim font-normal"></th>
+                            <th style={{ padding: '0.5rem' }} />
                             {labels.map((l) => (
-                                <th key={l} className="text-center p-2 text-dim font-normal">
+                                <th
+                                    key={l}
+                                    className="eyebrow"
+                                    style={{
+                                        padding: '0.5rem',
+                                        textAlign: 'center',
+                                        color: 'var(--text-dim)',
+                                        fontWeight: 400,
+                                    }}
+                                >
                                     {l}
                                 </th>
                             ))}
@@ -370,15 +416,38 @@ function CosineMatrix({
                     <tbody>
                         {labels.map((row) => (
                             <tr key={row}>
-                                <th className="text-left p-2 text-dim font-normal">{row}</th>
+                                <th
+                                    className="eyebrow"
+                                    style={{
+                                        padding: '0.5rem 0.75rem',
+                                        textAlign: 'right',
+                                        color: 'var(--text-dim)',
+                                        fontWeight: 400,
+                                        whiteSpace: 'nowrap',
+                                    }}
+                                >
+                                    {row}
+                                </th>
                                 {labels.map((col) => {
                                     const v = matrix[row]?.[col] ?? 0;
-                                    const bg = cosineHeatColor(v);
+                                    const isDiagonal = row === col;
+                                    // Heatmap: aqua opacity scales with the cosine value.
+                                    const fill = Math.max(0, Math.min(1, v));
                                     return (
                                         <td
                                             key={col}
-                                            className="text-center p-2 rounded"
-                                            style={{ backgroundColor: bg }}
+                                            style={{
+                                                textAlign: 'center',
+                                                padding: '0.55rem 0.4rem',
+                                                borderRadius: 'var(--radius)',
+                                                border: isDiagonal
+                                                    ? '1px solid var(--aqua-deep)'
+                                                    : '1px solid var(--line)',
+                                                background: `rgba(111, 227, 224, ${fill})`,
+                                                color: v > 0.6 ? 'var(--ink)' : 'var(--text)',
+                                                fontWeight: isDiagonal ? 700 : 500,
+                                            }}
+                                            title={`${row} · ${col} = ${v.toFixed(4)}`}
                                         >
                                             {v.toFixed(3)}
                                         </td>
@@ -389,6 +458,9 @@ function CosineMatrix({
                     </tbody>
                 </table>
             </div>
+            <p className="faint text-xs mono mt-3" style={{ letterSpacing: '0.04em' }}>
+                cell opacity ∝ cosine · diagonal = self (1.000)
+            </p>
         </div>
     );
 }
@@ -403,42 +475,56 @@ function AnchorReadoutCard({
     anchors: Array<{ word: string; similarity: number }>;
 }) {
     return (
-        <div className="card flex flex-col gap-3">
+        <div className="panel rise rise-5 flex flex-col gap-3">
             <div>
-                <div className="text-sm font-bold text-white">{title}</div>
-                <div className="text-xs text-dim font-mono">{subtitle}</div>
+                <div className="display" style={{ fontSize: '1.5rem' }}>
+                    {title}
+                </div>
+                <div className="mono text-xs faint mt-1">{subtitle}</div>
             </div>
             {anchors.length > 0 ? (
-                <div className="flex flex-col gap-1.5 mt-1">
+                <div className="flex flex-col gap-1">
                     {anchors.map((a) => {
                         const pct = Math.max(0, Math.min(100, a.similarity * 100));
                         return (
-                            <div key={a.word} className="relative flex items-center justify-between px-3 py-2 rounded-lg text-xs font-mono overflow-hidden bg-white/5 border border-white/5 group hover:border-violet-500/30 transition-all w-full">
-                                <div 
-                                    className="absolute left-0 top-0 bottom-0 bg-violet-600/10 group-hover:bg-violet-600/20 transition-all"
-                                    style={{ width: `${pct}%` }}
+                            <div
+                                key={a.word}
+                                className="relative flex items-center justify-between mono text-xs"
+                                style={{
+                                    overflow: 'hidden',
+                                    padding: '0.4rem 0.7rem',
+                                    borderRadius: 'var(--radius)',
+                                    border: '1px solid var(--line)',
+                                    background: 'var(--ink-deep)',
+                                }}
+                            >
+                                <div
+                                    className="absolute pointer-events-none"
+                                    style={{
+                                        left: 0,
+                                        top: 0,
+                                        bottom: 0,
+                                        width: `${pct}%`,
+                                        background: 'rgba(111, 227, 224, 0.14)',
+                                        borderRight: '1px solid rgba(111, 227, 224, 0.35)',
+                                    }}
                                 />
-                                <span className="relative text-white/90 font-medium">{a.word}</span>
-                                <span className="relative text-violet-400 font-bold">{a.similarity.toFixed(3)}</span>
+                                <span className="relative" style={{ color: 'var(--text)' }}>
+                                    {a.word}
+                                </span>
+                                <span
+                                    className="relative"
+                                    style={{ color: 'var(--aqua-bright)', fontWeight: 700 }}
+                                >
+                                    {a.similarity.toFixed(3)}
+                                </span>
                             </div>
                         );
                     })}
                 </div>
             ) : (
-                <div className="text-xs text-dim">No anchor words available.</div>
+                <div className="mono text-xs faint">No anchor words available.</div>
             )}
         </div>
     );
-}
-
-/** Map cosine [-1, 1] to a faint purple gradient for the heatmap.
- * 1.0 → strong purple, 0.0 → near-neutral, < 0 → faded blue. */
-function cosineHeatColor(v: number): string {
-    const clamped = Math.max(-1, Math.min(1, v));
-    if (clamped >= 0) {
-        const alpha = Math.round(clamped * 0.7 * 255);
-        return `rgba(139, 92, 246, ${alpha / 255})`;
-    }
-    const alpha = Math.round(-clamped * 0.4 * 255);
-    return `rgba(59, 130, 246, ${alpha / 255})`;
 }

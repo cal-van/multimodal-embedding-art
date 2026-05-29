@@ -157,128 +157,252 @@ export function JobPage() {
 
     if (error) {
         return (
-            <div className="flex flex-col items-center justify-center h-64 gap-4">
-                <div className="text-red-500 font-bold text-xl">Job Not Found</div>
-                <div className="text-dim text-center">
-                    {error} <br />
-                    <span className="text-xs mt-2 block">Create a new job to continue.</span>
-                </div>
-                <div className="flex gap-4">
-                    <a href="/" className="px-4 py-2 bg-[#27272a] hover:bg-[#3f3f46] rounded text-white transition-colors">
-                        Go Home
-                    </a>
+            <div className="max-w-2xl mx-auto">
+                <div className="panel flex flex-col gap-4 rise rise-1" style={{ textAlign: 'center' }}>
+                    <span className="eyebrow" style={{ color: 'var(--err)' }}>
+                        Signal lost
+                    </span>
+                    <h1 className="display" style={{ fontSize: '2.4rem' }}>
+                        Job not <em style={{ fontStyle: 'italic', color: 'var(--accent)' }}>found</em>
+                    </h1>
+                    <p className="dim text-sm">
+                        {error}
+                        <br />
+                        <span className="faint text-xs mt-1" style={{ display: 'block' }}>
+                            Create a new job to continue.
+                        </span>
+                    </p>
+                    <div className="flex justify-center mt-1">
+                        <a href="/" className="preset">
+                            ← Go home
+                        </a>
+                    </div>
                 </div>
             </div>
         );
     }
 
-    if (!job) return <div>Loading...</div>;
+    if (!job) {
+        return (
+            <div className="flex items-center gap-3" style={{ padding: '2rem 0' }}>
+                <span
+                    style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: 'var(--aqua)',
+                        boxShadow: '0 0 8px var(--aqua)',
+                        animation: 'pulse 2.4s ease-in-out infinite',
+                    }}
+                />
+                <span className="eyebrow">Loading run…</span>
+            </div>
+        );
+    }
 
     const isShowcase = job.kind === 'showcase';
-    const heading = isShowcase ? 'Showcase Job' : 'Optimization Job';
+    const progress = job.progress || 0;
+    const shortId = (job.id || id || '').slice(0, 8);
+
+    const logsPanel = (
+        <div
+            className="panel"
+            ref={logsRef}
+            style={{
+                height: '24rem',
+                overflow: 'auto',
+                fontFamily: 'var(--font-mono)',
+                padding: '0',
+            }}
+        >
+            <div
+                className="eyebrow"
+                style={{
+                    position: 'sticky',
+                    top: 0,
+                    background: 'var(--panel)',
+                    padding: '1rem 1.25rem 0.75rem',
+                    borderBottom: '1px solid var(--line)',
+                    zIndex: 1,
+                }}
+            >
+                Logs
+            </div>
+            <div className="flex flex-col gap-1 text-xs" style={{ padding: '0.75rem 1.25rem 1rem' }}>
+                {(job.logs || []).map((log, i) => {
+                    const isErr = /error|failed/i.test(log);
+                    const isOk = /completed|sim=/i.test(log);
+                    const color = isErr
+                        ? 'var(--err)'
+                        : isOk
+                          ? 'var(--aqua)'
+                          : 'var(--text-dim)';
+                    return (
+                        <div key={i} style={{ color, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {log}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
 
     return (
         <div className="flex flex-col gap-6">
-            <div className="flex justify-between items-center">
-                <h1 className="text-2xl font-bold">{heading}</h1>
-                <div className={`badge ${job.status}`}>{job.status?.toUpperCase() || 'UNKNOWN'}</div>
-            </div>
-
-            <div className="card">
-                <div className="flex justify-between text-sm mb-2 text-dim">
-                    <span>Progress</span>
-                    <span>{Math.round((job.progress || 0) * 100)}%</span>
+            <header className="page-head rise rise-1" style={{ marginBottom: '0.4rem' }}>
+                <div className="flex justify-between items-center">
+                    <div className="flex flex-col gap-1">
+                        <span className="eyebrow">
+                            {isShowcase ? '— Showcase run' : '— Single-modality run'} ·{' '}
+                            <span className="mono">{shortId}</span>
+                        </span>
+                        <h1 className="display" style={{ fontSize: '3rem' }}>
+                            {isShowcase ? (
+                                <>
+                                    Show<em style={{ fontStyle: 'italic', color: 'var(--accent)' }}>case</em>
+                                </>
+                            ) : (
+                                <>
+                                    Ren<em style={{ fontStyle: 'italic', color: 'var(--accent)' }}>der</em>
+                                </>
+                            )}
+                        </h1>
+                    </div>
+                    <div className={`badge ${job.status}`}>{job.status?.toUpperCase() || 'UNKNOWN'}</div>
                 </div>
-                <div className="w-full bg-[#27272a] h-2 rounded-full overflow-hidden">
+            </header>
+
+            <div className="panel rise rise-2">
+                <div className="flex justify-between items-center mb-2">
+                    <span className="field-label">Progress</span>
+                    <span className="readout">{Math.round(progress * 100)}%</span>
+                </div>
+                <div
+                    style={{
+                        width: '100%',
+                        height: 3,
+                        borderRadius: 2,
+                        background: 'var(--line)',
+                        overflow: 'hidden',
+                    }}
+                >
                     <div
-                        className="bg-[#8b5cf6] h-full transition-all duration-300"
-                        style={{ width: `${(job.progress || 0) * 100}%` }}
+                        style={{
+                            height: '100%',
+                            width: `${progress * 100}%`,
+                            background: 'var(--accent)',
+                            borderRadius: 2,
+                            transition: 'width 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
+                        }}
                     />
                 </div>
             </div>
 
             {isShowcase ? (
-                <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+                <div
+                    className="grid gap-6 rise rise-3"
+                    style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}
+                >
                     <div className="flex flex-col gap-4">
                         <ShowcaseEventStream events={events} />
                         {job.manifest_url ? (
                             <ShowcaseManifestView manifestUrl={job.manifest_url} />
                         ) : (
-                            <div className="card text-sm text-dim">
-                                Showcase running… the manifest will appear once renders are
-                                complete.
+                            <div className="panel flex items-center gap-3">
+                                <span
+                                    style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: '50%',
+                                        background: 'var(--aqua)',
+                                        boxShadow: '0 0 8px var(--aqua)',
+                                        animation: 'pulse 2.4s ease-in-out infinite',
+                                        flexShrink: 0,
+                                    }}
+                                />
+                                <span className="dim text-sm">
+                                    Showcase running — the manifest will appear once renders are
+                                    complete.
+                                </span>
                             </div>
                         )}
                     </div>
-                    <div
-                        className="card flex flex-col gap-2 h-96 overflow-auto font-mono text-xs"
-                        ref={logsRef}
-                    >
-                        <h3 className="text-sm font-bold sticky top-0 bg-[#18181b] py-2 border-b border-[#27272a]">
-                            Logs
-                        </h3>
-                        {(job.logs || []).map((log, i) => (
-                            <div key={i}>{log}</div>
-                        ))}
-                    </div>
+                    {logsPanel}
                 </div>
             ) : (
-                <div className="grid grid-cols-2 gap-6">
-                    <div
-                        className="card flex flex-col gap-2 h-96 overflow-auto font-mono text-xs"
-                        ref={logsRef}
-                    >
-                        <h3 className="text-sm font-bold sticky top-0 bg-[#18181b] py-2 border-b border-[#27272a]">
-                            Logs
-                        </h3>
-                        {(job.logs || []).map((log, i) => (
-                            <div key={i}>{log}</div>
-                        ))}
-                    </div>
+                <div className="grid gap-6 rise rise-3" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                    {logsPanel}
 
-                    <div className="card flex items-center justify-center text-dim bg-black/20 overflow-hidden relative min-h-[300px]">
+                    <div
+                        className="panel flex items-center justify-center"
+                        style={{ minHeight: 320, overflow: 'hidden' }}
+                    >
                         {job.result_url ? (
-                            <div className="relative w-full h-full flex flex-col items-center justify-center p-4">
+                            <div
+                                className="flex flex-col items-center justify-center w-full"
+                                style={{ position: 'relative' }}
+                            >
                                 {job.output_modality === 'audio' || job.result_url.endsWith('.wav') ? (
-                                    <div className="flex flex-col items-center gap-4 w-full max-w-md p-6 bg-black/30 rounded-xl backdrop-blur-md border border-white/5 shadow-2xl">
-                                        <div className="text-violet-400 text-4xl">🎵</div>
-                                        <div className="text-sm font-semibold tracking-wide text-white">Audio Result</div>
+                                    <div className="flex flex-col gap-3 w-full">
+                                        <span className="field-label">Audio · work</span>
                                         <audio
                                             src={`http://127.0.0.1:8000${job.result_url}`}
                                             controls
-                                            className="w-full mt-2"
+                                            style={{ width: '100%' }}
                                         />
                                     </div>
-                                ) : job.output_modality === 'video' || job.result_url.endsWith('.mp4') || job.result_url.endsWith('.gif') ? (
+                                ) : job.output_modality === 'video' ||
+                                  job.result_url.endsWith('.mp4') ||
+                                  job.result_url.endsWith('.gif') ? (
                                     <video
                                         src={`http://127.0.0.1:8000${job.result_url}`}
                                         controls
                                         autoPlay
                                         loop
-                                        className="max-w-full max-h-[400px] object-contain rounded-lg shadow-lg border border-white/5"
+                                        style={{
+                                            maxWidth: '100%',
+                                            maxHeight: 420,
+                                            objectFit: 'contain',
+                                            borderRadius: 'var(--radius)',
+                                            border: '1px solid var(--line)',
+                                        }}
                                     />
                                 ) : (
                                     <img
                                         src={`http://127.0.0.1:8000${job.result_url}`}
                                         alt="Optimization Result"
-                                        className="max-w-full max-h-[400px] object-contain rounded-lg shadow-lg"
+                                        style={{
+                                            maxWidth: '100%',
+                                            maxHeight: 420,
+                                            objectFit: 'contain',
+                                            borderRadius: 'var(--radius)',
+                                            border: '1px solid var(--line)',
+                                        }}
                                     />
                                 )}
                                 <a
                                     href={`http://127.0.0.1:8000${job.result_url}`}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="absolute bottom-4 right-4 bg-white/10 hover:bg-white/20 text-white px-3 py-1 rounded-full text-xs backdrop-blur-sm transition-colors"
+                                    className="preset"
+                                    style={{ position: 'absolute', bottom: 0, right: 0 }}
                                 >
-                                    Open Full
+                                    Open full ↗
                                 </a>
                             </div>
                         ) : (
-                            <div className="flex flex-col items-center gap-2">
-                                <div className="animate-pulse flex flex-col items-center gap-3">
-                                    <div className="w-8 h-8 border-4 border-violet-500 border-t-transparent rounded-full animate-spin"></div>
-                                    <span>Waiting for result…</span>
-                                </div>
+                            <div className="flex items-center gap-3">
+                                <span
+                                    style={{
+                                        width: 6,
+                                        height: 6,
+                                        borderRadius: '50%',
+                                        background: 'var(--aqua)',
+                                        boxShadow: '0 0 8px var(--aqua)',
+                                        animation: 'pulse 2.4s ease-in-out infinite',
+                                    }}
+                                />
+                                <span className="eyebrow">Awaiting render…</span>
                             </div>
                         )}
                     </div>
@@ -292,8 +416,19 @@ export function JobPage() {
 function ShowcaseEventStream({ events }: { events: ShowcaseEvent[] }) {
     if (events.length === 0) {
         return (
-            <div className="card text-sm text-dim">
-                Waiting for showcase events…
+            <div className="panel flex items-center gap-3">
+                <span
+                    style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: 'var(--aqua)',
+                        boxShadow: '0 0 8px var(--aqua)',
+                        animation: 'pulse 2.4s ease-in-out infinite',
+                        flexShrink: 0,
+                    }}
+                />
+                <span className="dim text-sm">Waiting for showcase events…</span>
             </div>
         );
     }
@@ -304,20 +439,20 @@ function ShowcaseEventStream({ events }: { events: ShowcaseEvent[] }) {
     const lastComplete = [...events].reverse().find((e) => e.type === 'modality_complete');
 
     return (
-        <div className="card flex flex-col gap-3">
+        <div className="panel flex flex-col gap-3">
             <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold uppercase tracking-wide">Live Stream</h3>
-                <span className="text-xs text-dim font-mono">
+                <span className="eyebrow">Live stream</span>
+                <span className="readout cool">
                     {last.type}
                     {last.modality ? ` · ${last.modality}` : ''}
                     {last.track ? ` · ${last.track}` : ''}
                 </span>
             </div>
             {lastComplete && (
-                <div className="text-xs text-dim flex flex-col gap-1">
-                    <div>
-                        Last complete:{' '}
-                        <span className="font-mono">
+                <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="field-label">Last complete</span>
+                        <span className="readout cool">
                             {lastComplete.modality} · sim=
                             {typeof lastComplete.similarity === 'number'
                                 ? lastComplete.similarity.toFixed(3)
@@ -325,18 +460,28 @@ function ShowcaseEventStream({ events }: { events: ShowcaseEvent[] }) {
                         </span>
                     </div>
                     {Array.isArray(lastComplete.text_anchor) && lastComplete.text_anchor.length > 0 && (
-                        <div>
-                            text-anchor:{' '}
-                            <span className="font-mono">
-                                {lastComplete.text_anchor
-                                    .slice(0, 8)
-                                    .map((t) =>
-                                        typeof t.similarity === 'number'
-                                            ? `${t.word} (${t.similarity.toFixed(2)})`
-                                            : t.word,
-                                    )
-                                    .join(', ')}
-                            </span>
+                        <div className="flex flex-col gap-1">
+                            <span className="field-label">Text-anchor</span>
+                            <div className="flex flex-wrap gap-1">
+                                {lastComplete.text_anchor.slice(0, 8).map((t, i) => (
+                                    <span
+                                        key={`${t.word}-${i}`}
+                                        className="mono text-xs"
+                                        style={{
+                                            color: 'var(--text-dim)',
+                                            border: '1px solid var(--line)',
+                                            borderRadius: 'var(--radius)',
+                                            padding: '0.12rem 0.45rem',
+                                            letterSpacing: '0.04em',
+                                        }}
+                                    >
+                                        {t.word}
+                                        {typeof t.similarity === 'number' && (
+                                            <span className="faint"> {t.similarity.toFixed(2)}</span>
+                                        )}
+                                    </span>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </div>
