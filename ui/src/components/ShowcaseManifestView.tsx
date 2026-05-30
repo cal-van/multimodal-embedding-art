@@ -38,6 +38,7 @@ export function ShowcaseManifestView({ manifestUrl }: Props) {
 
     useEffect(() => {
         let cancelled = false;
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setManifest(null);
         setError(null);
         api.fetchShowcaseManifest(manifestUrl)

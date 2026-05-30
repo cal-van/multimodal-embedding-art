@@ -25,6 +25,7 @@ export function JobPage() {
     useEffect(() => {
         if (!id) return;
 
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setError(null);
         api.getJob(id)
             .then(setJob)

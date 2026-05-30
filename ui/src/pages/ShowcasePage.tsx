@@ -60,7 +60,7 @@ export function ShowcasePage() {
     );
     const [videoBackbone, setVideoBackbone] = useState<'ltx-video' | 'svd'>('ltx-video');
     const [autocastDtype, setAutocastDtype] = useState<'fp32' | 'fp16' | 'bf16'>('bf16');
-    const [compileMode, setCompileMode] = useState<CompileMode>('reduce-overhead');
+    const [compileMode, setCompileMode] = useState<CompileMode>('none');
     const [steps, setSteps] = useState(200);
     const [seed, setSeed] = useState<string>('');
     const [interpret, setInterpret] = useState(true);
