@@ -36,9 +36,9 @@ from pathlib import Path
 # Automatically add LanguageBind to path if found as a sibling or local subdirectory
 for path_cand in [
     Path(__file__).resolve().parents[2] / "LanguageBind",  # local subfolder in repo root
-    Path.cwd() / "LanguageBind",                          # local subfolder in CWD
+    Path.cwd() / "LanguageBind",  # local subfolder in CWD
     Path(__file__).resolve().parents[3] / "LanguageBind",  # sibling folder
-    Path.cwd().parent / "LanguageBind",                    # sibling folder in CWD parent
+    Path.cwd().parent / "LanguageBind",  # sibling folder in CWD parent
 ]:
     if path_cand.exists() and str(path_cand.resolve()) not in sys.path:
         sys.path.insert(0, str(path_cand.resolve()))

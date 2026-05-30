@@ -71,9 +71,9 @@ from pathlib import Path
 # Automatically add LanguageBind to path if found as a sibling or local subdirectory
 for path_cand in [
     Path(__file__).resolve().parents[3] / "LanguageBind",  # local subfolder in repo root
-    Path.cwd() / "LanguageBind",                          # local subfolder in CWD
+    Path.cwd() / "LanguageBind",  # local subfolder in CWD
     Path(__file__).resolve().parents[4] / "LanguageBind",  # sibling folder
-    Path.cwd().parent / "LanguageBind",                    # sibling folder in CWD parent
+    Path.cwd().parent / "LanguageBind",  # sibling folder in CWD parent
 ]:
     if path_cand.exists() and str(path_cand.resolve()) not in sys.path:
         sys.path.insert(0, str(path_cand.resolve()))
@@ -260,6 +260,7 @@ class LanguageBindEncoder:
         except ImportError as e:
             try:
                 import os
+
                 debug_path = Path(__file__).resolve().parents[3] / "outputs" / "debug_import.txt"
                 debug_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(debug_path, "w") as f:
@@ -275,10 +276,14 @@ class LanguageBindEncoder:
                         try:
                             f.write(f"LanguageBind contents: {os.listdir(lb_path)}\n")
                         except Exception as list_err:
-                            f.write(f"LanguageBind listdir error: {type(list_err).__name__}: {list_err}\n")
+                            f.write(
+                                f"LanguageBind listdir error: {type(list_err).__name__}: {list_err}\n"
+                            )
                             try:
                                 stat = os.stat(lb_path)
-                                f.write(f"LanguageBind stat: mode={stat.st_mode}, uid={stat.st_uid}, gid={stat.st_gid}\n")
+                                f.write(
+                                    f"LanguageBind stat: mode={stat.st_mode}, uid={stat.st_uid}, gid={stat.st_gid}\n"
+                                )
                             except Exception as stat_err:
                                 f.write(f"LanguageBind stat error: {stat_err}\n")
             except Exception:

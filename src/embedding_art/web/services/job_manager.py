@@ -48,16 +48,19 @@ def get_engine() -> EmbeddingArtEngine:
 
         # Register generators
         from embedding_art.generators.sd35 import SD35ImageGenerator
+
         _engine.register_generator("image", SD35ImageGenerator(device=device))
 
         try:
             from embedding_art.generators.stable_audio_open import StableAudioOpenGenerator
+
             _engine.register_generator("audio", StableAudioOpenGenerator(device=device))
         except Exception as e:
             logger.warning(f"Audio generator failed to load: {e}")
 
         try:
             from embedding_art.generators.ltx_video import LTXVideoGenerator
+
             _engine.register_generator("video", LTXVideoGenerator(device=device))
         except Exception as e:
             logger.warning(f"Video generator failed to load: {e}")
