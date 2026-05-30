@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 LanguageBind encoder — canonical multimodal encoder for the v3 aggressive-rewrite.
 
@@ -63,6 +64,20 @@ checkpoints are essential to the shared-space alignment property.
 """
 
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Automatically add LanguageBind to path if found as a sibling or local subdirectory
+for path_cand in [
+    Path(__file__).resolve().parents[3] / "LanguageBind",  # local subfolder in repo root
+    Path.cwd() / "LanguageBind",                          # local subfolder in CWD
+    Path(__file__).resolve().parents[4] / "LanguageBind",  # sibling folder
+    Path.cwd().parent / "LanguageBind",                    # sibling folder in CWD parent
+]:
+    if path_cand.exists() and str(path_cand.resolve()) not in sys.path:
+        sys.path.insert(0, str(path_cand.resolve()))
+        break
 
 import gc
 import logging
@@ -243,6 +258,31 @@ class LanguageBindEncoder:
                 LanguageBindVideoProcessor,
             )
         except ImportError as e:
+            try:
+                import os
+                debug_path = Path(__file__).resolve().parents[3] / "outputs" / "debug_import.txt"
+                debug_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(debug_path, "w") as f:
+                    f.write(f"Error: {e}\n")
+                    f.write(f"CWD: {os.getcwd()}\n")
+                    f.write(f"sys.path: {sys.path}\n")
+                    f.write(f"__file__: {__file__}\n")
+
+                    lb_path = Path(__file__).resolve().parents[4] / "LanguageBind"
+                    f.write(f"LanguageBind path: {lb_path}\n")
+                    f.write(f"LanguageBind exists: {lb_path.exists()}\n")
+                    if lb_path.exists():
+                        try:
+                            f.write(f"LanguageBind contents: {os.listdir(lb_path)}\n")
+                        except Exception as list_err:
+                            f.write(f"LanguageBind listdir error: {type(list_err).__name__}: {list_err}\n")
+                            try:
+                                stat = os.stat(lb_path)
+                                f.write(f"LanguageBind stat: mode={stat.st_mode}, uid={stat.st_uid}, gid={stat.st_gid}\n")
+                            except Exception as stat_err:
+                                f.write(f"LanguageBind stat error: {stat_err}\n")
+            except Exception:
+                pass
             raise ModelLoadError(
                 "languagebind",
                 ImportError(
@@ -260,7 +300,7 @@ class LanguageBindEncoder:
                     "  2. Install its transitive Python deps via this repo's extras:\n"
                     '       pip install -e ".[languagebind]"        # Linux / Windows\n'
                     '       pip install -e ".[languagebind-macos]"  # Apple Silicon\n'
-                    "     (macOS arm64 uses eva-decord because upstream decord has\n"
+                    "     (macOS arm64 uses eva-decord because upstream devord has\n"
                     "     no prebuilt arm64 wheels.)\n"
                     "\n"
                     "See README.md / CLAUDE.md for the full guide."

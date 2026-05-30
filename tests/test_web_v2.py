@@ -228,7 +228,7 @@ def test_get_engine_uses_registry():
                 return_value=mock_registry,
             ) as mock_create_registry,
             patch(
-                "embedding_art.web.services.job_manager.EmbeddingArtEngine.from_registry",
+                "embedding_art.core.engine.EmbeddingArtEngine.from_registry",
                 return_value=mock_engine,
             ) as mock_from_registry,
         ):

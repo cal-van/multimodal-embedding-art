@@ -77,8 +77,15 @@ class SpectralRegularizer:
         else:
             gray = decoded[:, 0]
 
-        # Compute 2D FFT
-        fft = torch.fft.fft2(gray)
+        # Compute 2D FFT. Cast to float32 first because torch.fft operations
+        # do not support float16 or bfloat16 on CPU/MPS devices.
+        orig_dtype = gray.dtype
+        if orig_dtype in (torch.float16, torch.bfloat16):
+            gray_fft = gray.float()
+        else:
+            gray_fft = gray
+
+        fft = torch.fft.fft2(gray_fft)
         fft_shift = torch.fft.fftshift(fft)
         magnitude = torch.abs(fft_shift)
 
@@ -95,7 +102,7 @@ class SpectralRegularizer:
         # Penalize high-frequency energy
         high_freq_energy = (magnitude * high_freq_mask).mean()
 
-        return self.weight * high_freq_energy
+        return (self.weight * high_freq_energy).to(orig_dtype)
 
 
 @dataclass
