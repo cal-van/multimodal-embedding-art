@@ -236,10 +236,10 @@ def test_get_engine_uses_registry():
 
         mock_create_registry.assert_called_once()
         mock_from_registry.assert_called_once()
-        # Verify from_registry was called with our registry and imagebind as default
+        # Verify from_registry was called with our registry and languagebind as default
         call_kwargs = mock_from_registry.call_args
-        assert call_kwargs[1].get("default_encoder") == "imagebind" or (
-            len(call_kwargs[0]) >= 2 and call_kwargs[0][1] == "imagebind"
+        assert call_kwargs[1].get("default_encoder") == "languagebind" or (
+            len(call_kwargs[0]) >= 2 and call_kwargs[0][1] == "languagebind"
         )
         assert engine is mock_engine
     finally:

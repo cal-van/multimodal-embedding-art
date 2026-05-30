@@ -20,8 +20,6 @@ from embedding_art.core.concept_spec import ConceptSpec
 from embedding_art.core.config import LossConfig
 from embedding_art.core.render_result import LossBreakdown
 from embedding_art.encoders.defaults import create_default_registry
-from embedding_art.generators.audio import AudioLDMGenerator
-from embedding_art.generators.video import SVDVideoGenerator
 from embedding_art.web.sockets import manager
 
 # Configure logging
@@ -45,21 +43,22 @@ def get_engine() -> EmbeddingArtEngine:
 
         registry = create_default_registry()
         _engine = EmbeddingArtEngine.from_registry(
-            registry, default_encoder="imagebind", device=device
+            registry, default_encoder="languagebind", device=device
         )
 
         # Register generators
-        from embedding_art.generators.diffusion import SDXLDiffusionGenerator
-
-        _engine.register_generator("image", SDXLDiffusionGenerator(device=device))
+        from embedding_art.generators.sd35 import SD35ImageGenerator
+        _engine.register_generator("image", SD35ImageGenerator(device=device))
 
         try:
-            _engine.register_generator("audio", AudioLDMGenerator(device=device))
+            from embedding_art.generators.stable_audio_open import StableAudioOpenGenerator
+            _engine.register_generator("audio", StableAudioOpenGenerator(device=device))
         except Exception as e:
             logger.warning(f"Audio generator failed to load: {e}")
 
         try:
-            _engine.register_generator("video", SVDVideoGenerator(device=device))
+            from embedding_art.generators.ltx_video import LTXVideoGenerator
+            _engine.register_generator("video", LTXVideoGenerator(device=device))
         except Exception as e:
             logger.warning(f"Video generator failed to load: {e}")
 

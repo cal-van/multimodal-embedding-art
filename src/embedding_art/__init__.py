@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 Embedding Art: Generate art by optimizing toward coordinates in multimodal embedding space.
 
@@ -28,6 +29,18 @@ v1 Example (backward compatible):
     result = engine.optimize(target, 'image', OptimizationConfig(steps=500))
     result.get_final_image(generator).save('goldfish.png')
 """
+
+import sys
+from pathlib import Path
+
+# Automatically add LanguageBind to path if found as a sibling
+for path_cand in [
+    Path(__file__).resolve().parents[3] / "LanguageBind",
+    Path.cwd().parent / "LanguageBind",
+]:
+    if path_cand.exists() and str(path_cand.resolve()) not in sys.path:
+        sys.path.insert(0, str(path_cand.resolve()))
+        break
 
 from embedding_art import upscalers
 from embedding_art.core import (
