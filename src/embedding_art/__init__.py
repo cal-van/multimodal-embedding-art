@@ -44,6 +44,31 @@ for path_cand in [
         sys.path.insert(0, str(path_cand.resolve()))
         break
 
+# Dynamic compatibility patch: newer transformers versions lack _expand_mask in clip modeling
+try:
+    import torch
+    import transformers.models.clip.modeling_clip as modeling_clip
+
+    if not hasattr(modeling_clip, "_expand_mask"):
+
+        def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: int | None = None):
+            bsz, src_len = mask.size()
+            tgt_len = tgt_len if tgt_len is not None else src_len
+            expanded_mask = mask[:, None, None, :].expand(bsz, 1, tgt_len, src_len).to(dtype)
+            inverted_mask = 1.0 - expanded_mask
+            return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
+
+        modeling_clip._expand_mask = _expand_mask
+
+    # Newer torchaudio versions removed set_audio_backend
+    import torchaudio
+
+    if not hasattr(torchaudio, "set_audio_backend"):
+        torchaudio.set_audio_backend = lambda backend: None
+except Exception:
+    pass
+
+
 from embedding_art import upscalers
 from embedding_art.core import (
     AugmentationConfig,

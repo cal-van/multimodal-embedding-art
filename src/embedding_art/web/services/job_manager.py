@@ -472,6 +472,23 @@ def _run_showcase_job(job: Job, broadcast: Callable[[dict], None]) -> None:
                         msg += f" anchor=[{', '.join(words)}]"
             elif kind == "track_complete":
                 msg = f"Track complete: {event.get('track')}"
+            elif kind == "step":
+                modality = event.get("modality")
+                step = event.get("step", 0)
+                total_steps = event.get("total_steps", 100)
+                opt_modalities = [m for m in job.modalities if m in ("image", "audio", "video")]
+                if modality in opt_modalities and total_steps > 0:
+                    idx = opt_modalities.index(modality)
+                    overall_progress = min(
+                        0.99, (idx * total_steps + step) / (len(opt_modalities) * total_steps)
+                    )
+                    job.progress = overall_progress
+                    broadcast({"type": "progress", "progress": overall_progress})
+                    if step % 50 == 0 or step == 1 or step == total_steps:
+                        msg = f"Track {event.get('track')} - {modality}: Step {step}/{total_steps} (loss={event.get('loss'):.4f}, sim={event.get('similarity'):.4f})"
+                        job.logs.append(msg)
+                        broadcast({"type": "log", "message": msg})
+                return
             else:
                 msg = f"event: {kind}"
             job.logs.append(msg)

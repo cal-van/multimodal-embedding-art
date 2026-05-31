@@ -6,9 +6,14 @@ from embedding_art.web.services.job_manager import job_manager
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     # Clear jobs before each test
     job_manager._jobs.clear()
+
+    async def mock_start_job(job_id: str) -> None:
+        pass
+
+    monkeypatch.setattr(job_manager, "start_job", mock_start_job)
     return TestClient(app)
 
 

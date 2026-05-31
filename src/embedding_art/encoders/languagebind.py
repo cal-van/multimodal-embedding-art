@@ -654,6 +654,21 @@ class LanguageBindEncoder:
                 ValueError(f"Expected 5D tensor [B, F, 3, H, W], got shape {list(tensor.shape)}"),
             )
 
+        # Interpolate temporally if the frame count does not match the model's expectation
+        num_frames = getattr(model.config.vision_config, "num_frames", 8)
+        b, f, c, h, w = tensor.shape
+        if f != num_frames:
+            permuted = tensor.permute(0, 2, 3, 4, 1)  # [B, C, H, W, F]
+            reshaped = permuted.reshape(b * c * h * w, 1, f)
+            interpolated = F.interpolate(
+                reshaped,
+                size=num_frames,
+                mode="linear",
+                align_corners=False,
+            )
+            back = interpolated.view(b, c, h, w, num_frames)
+            tensor = back.permute(0, 4, 1, 2, 3)
+
         mean = torch.tensor(_IMAGENET_MEAN, device=tensor.device).view(1, 1, 3, 1, 1)
         std = torch.tensor(_IMAGENET_STD, device=tensor.device).view(1, 1, 3, 1, 1)
         normalized = (tensor - mean) / std
@@ -668,6 +683,9 @@ class LanguageBindEncoder:
                 align_corners=False,
             )
             normalized = flat.view(b, f, c, _INPUT_SIZE, _INPUT_SIZE)
+
+        # Permute from [B, F, C, H, W] to [B, C, F, H, W] as expected by LanguageBind's modeling_video
+        normalized = normalized.permute(0, 2, 1, 3, 4)
 
         vision_outputs = model.vision_model(pixel_values=normalized)
         pooled = (

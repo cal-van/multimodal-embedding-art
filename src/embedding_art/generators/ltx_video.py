@@ -79,6 +79,13 @@ class LTXVideoGenerator:
         width: int = DEFAULT_WIDTH,
         fps: int = DEFAULT_FPS,
     ) -> None:
+        import os
+
+        # Check environment variables to override default values for memory control
+        num_frames = int(os.environ.get("EMBED_ART_VIDEO_FRAMES", num_frames))
+        height = int(os.environ.get("EMBED_ART_VIDEO_HEIGHT", height))
+        width = int(os.environ.get("EMBED_ART_VIDEO_WIDTH", width))
+
         if num_frames <= 0 or height <= 0 or width <= 0:
             raise ValueError("num_frames, height, width must all be positive")
 

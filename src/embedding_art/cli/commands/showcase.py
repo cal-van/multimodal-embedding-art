@@ -674,6 +674,8 @@ def _render_track(
             sae=sae,
             sae_feature_labels=sae_feature_labels,
             linear_probes=linear_probes,
+            progress_callback=progress_callback,
+            track=track,
         )
         _emit_modality_complete("image", manifest["modalities"]["image"])
 
@@ -692,6 +694,8 @@ def _render_track(
             sae=sae,
             sae_feature_labels=sae_feature_labels,
             linear_probes=linear_probes,
+            progress_callback=progress_callback,
+            track=track,
         )
         _emit_modality_complete("audio", manifest["modalities"]["audio"])
 
@@ -710,6 +714,8 @@ def _render_track(
             sae=sae,
             sae_feature_labels=sae_feature_labels,
             linear_probes=linear_probes,
+            progress_callback=progress_callback,
+            track=track,
         )
         _emit_modality_complete("video", manifest["modalities"]["video"])
 
@@ -869,6 +875,8 @@ def _render_image(
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
     linear_probes: dict[str, Any] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    track: str = "honest",
 ) -> dict[str, Any]:
     console.print("[bold]Rendering image...[/bold]")
     if backbone == "sd35":
@@ -899,6 +907,19 @@ def _render_image(
                 completed=step + 1,
                 description=f"Optimising image (loss={loss:.4f}, sim={sim:.4f})",
             )
+            if progress_callback:
+                _emit(
+                    progress_callback,
+                    {
+                        "type": "step",
+                        "track": track,
+                        "modality": "image",
+                        "step": step + 1,
+                        "total_steps": config.steps,
+                        "loss": loss,
+                        "similarity": sim,
+                    },
+                )
 
         result = engine.render(
             target,
@@ -947,6 +968,8 @@ def _render_audio(
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
     linear_probes: dict[str, Any] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    track: str = "honest",
 ) -> dict[str, Any]:
     console.print(f"[bold]Rendering audio ({backbone})...[/bold]")
     if backbone == "stable-audio-open":
@@ -981,6 +1004,19 @@ def _render_audio(
                 completed=step + 1,
                 description=f"Optimising audio (loss={loss:.4f}, sim={sim:.4f})",
             )
+            if progress_callback:
+                _emit(
+                    progress_callback,
+                    {
+                        "type": "step",
+                        "track": track,
+                        "modality": "audio",
+                        "step": step + 1,
+                        "total_steps": config.steps,
+                        "loss": loss,
+                        "similarity": sim,
+                    },
+                )
 
         result = engine.render(
             target,
@@ -1029,6 +1065,8 @@ def _render_video(
     sae: Any = None,
     sae_feature_labels: dict[int, str] | None = None,
     linear_probes: dict[str, Any] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    track: str = "honest",
 ) -> dict[str, Any]:
     console.print(f"[bold]Rendering video ({backbone})...[/bold]")
     if backbone == "ltx-video":
@@ -1061,6 +1099,19 @@ def _render_video(
                 completed=step + 1,
                 description=f"Optimising video (loss={loss:.4f}, sim={sim:.4f})",
             )
+            if progress_callback:
+                _emit(
+                    progress_callback,
+                    {
+                        "type": "step",
+                        "track": track,
+                        "modality": "video",
+                        "step": step + 1,
+                        "total_steps": config.steps,
+                        "loss": loss,
+                        "similarity": sim,
+                    },
+                )
 
         result = engine.render(
             target,
